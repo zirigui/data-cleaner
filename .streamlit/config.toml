@@ -1,0 +1,24 @@
+[theme]
+font = "sans-serif"
+baseRadius = "small"
+showWidgetBorder = true
+
+[theme.light]
+primaryColor = "#1a1a1a"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f5f5f5"
+textColor = "#1a1a1a"
+borderColor = "#e0e0e0"
+
+[theme.dark]
+primaryColor = "#ececec"
+backgroundColor = "#0e1117"
+secondaryBackgroundColor = "#1a1c22"
+textColor = "#ececec"
+borderColor = "#2e3038"
+
+[server]
+maxUploadSize = 200
+
+[client]
+toolbarMode = "minimal"

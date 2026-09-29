@@ -81,8 +81,8 @@ def interpret_skewness(value: float) -> str:
     if abs(value) < 0.15:
         return "simétrica"
     if abs(value) < 1:
-        return "moderada " + ("à direita ↗" if value > 0 else "à esquerda ↙")
-    return "forte " + ("à direita ↗" if value > 0 else "à esquerda ↙")
+        return "moderada " + ("à direita" if value > 0 else "à esquerda")
+    return "forte " + ("à direita" if value > 0 else "à esquerda")
 
 
 def diagnose(df: pd.DataFrame) -> pd.DataFrame:
