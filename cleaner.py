@@ -1,0 +1,397 @@
+"""Funções de leitura, diagnóstico e limpeza de dados (sem dependência do Streamlit)."""
+
+import csv
+import io
+import re
+import unicodedata
+
+import pandas as pd
+
+NULL_TOKENS = ["", "na", "n/a", "nan", "null", "none", "-", "?", "sem dado"]
+
+
+# --------------------------------------------------------------------------- #
+# Leitura
+# --------------------------------------------------------------------------- #
+def detect_separator(sample: str) -> str:
+    try:
+        return csv.Sniffer().sniff(sample, delimiters=",;\t|").delimiter
+    except csv.Error:
+        counts = {sep: sample.count(sep) for sep in [",", ";", "\t", "|"]}
+        return max(counts, key=counts.get)
+
+
+def decode_bytes(data: bytes) -> str:
+    for encoding in ("utf-8-sig", "latin-1"):
+        try:
+            return data.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return data.decode("utf-8", errors="replace")
+
+
+def excel_sheets(data: bytes) -> list[str]:
+    return pd.ExcelFile(io.BytesIO(data)).sheet_names
+
+
+def read_file(data: bytes, name: str, sep: str | None = None, sheet: str | None = None) -> tuple[pd.DataFrame, str | None]:
+    """Lê o arquivo e retorna (DataFrame, separador usado ou None)."""
+    ext = name.rsplit(".", 1)[-1].lower()
+    if ext in ("csv", "txt"):
+        text = decode_bytes(data)
+        sep = sep or detect_separator(text[:20000])
+        return pd.read_csv(io.StringIO(text), sep=sep), sep
+    if ext in ("xlsx", "xls"):
+        return pd.read_excel(io.BytesIO(data), sheet_name=sheet or 0), None
+    if ext == "json":
+        try:
+            return pd.read_json(io.BytesIO(data)), None
+        except ValueError:
+            import json
+            return pd.json_normalize(json.loads(decode_bytes(data))), None
+    if ext == "parquet":
+        return pd.read_parquet(io.BytesIO(data)), None
+    raise ValueError(f"Formato não suportado: .{ext}")
+
+
+# --------------------------------------------------------------------------- #
+# Diagnóstico
+# --------------------------------------------------------------------------- #
+def is_text(series: pd.Series) -> bool:
+    return pd.api.types.is_object_dtype(series) or pd.api.types.is_string_dtype(series)
+
+
+def numeric_columns(df: pd.DataFrame) -> list[str]:
+    return df.select_dtypes(include="number").columns.tolist()
+
+
+def text_columns(df: pd.DataFrame) -> list[str]:
+    return [c for c in df.columns if is_text(df[c])]
+
+
+def pearson_skewness(series: pd.Series) -> float:
+    """Segundo coeficiente de assimetria de Pearson: 3 * (média - mediana) / desvio padrão."""
+    s = pd.to_numeric(series, errors="coerce").dropna()
+    if len(s) < 2 or s.std() == 0:
+        return 0.0
+    return float(3 * (s.mean() - s.median()) / s.std())
+
+
+def interpret_skewness(value: float) -> str:
+    if abs(value) < 0.15:
+        return "simétrica"
+    if abs(value) < 1:
+        return "moderada " + ("à direita ↗" if value > 0 else "à esquerda ↙")
+    return "forte " + ("à direita ↗" if value > 0 else "à esquerda ↙")
+
+
+def diagnose(df: pd.DataFrame) -> pd.DataFrame:
+    rows = []
+    for col in df.columns:
+        s = df[col]
+        row = {
+            "coluna": col,
+            "tipo": str(s.dtype),
+            "nulos": int(s.isna().sum()),
+            "% nulos": round(s.isna().mean() * 100, 2),
+            "valores únicos": int(s.nunique(dropna=True)),
+            "assimetria (Pearson)": None,
+            "interpretação": "",
+        }
+        if pd.api.types.is_numeric_dtype(s) and not pd.api.types.is_bool_dtype(s):
+            sk = pearson_skewness(s)
+            row["assimetria (Pearson)"] = round(sk, 3)
+            row["interpretação"] = interpret_skewness(sk)
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+# --------------------------------------------------------------------------- #
+# Etapas de limpeza — cada uma retorna (df, mensagens de log)
+# --------------------------------------------------------------------------- #
+def to_snake_case(name: str) -> str:
+    name = remove_accents(str(name)).strip().lower()
+    name = re.sub(r"[^\w]+", "_", name)
+    return re.sub(r"_+", "_", name).strip("_")
+
+
+def remove_accents(text: str) -> str:
+    return "".join(c for c in unicodedata.normalize("NFKD", text) if not unicodedata.combining(c))
+
+
+def columns_step(df, drop=None, rename=None, snake_case=False):
+    log = []
+    if drop:
+        df = df.drop(columns=drop)
+        log.append(f"Colunas excluídas: {', '.join(map(str, drop))}")
+    if rename:
+        rename = {k: v for k, v in rename.items() if v and v != k}
+        if rename:
+            df = df.rename(columns=rename)
+            log.append(f"Colunas renomeadas: {rename}")
+    if snake_case:
+        df.columns = [to_snake_case(c) for c in df.columns]
+        log.append("Nomes de colunas padronizados (snake_case)")
+    return df, log
+
+
+def parse_number(series: pd.Series, decimal_comma: bool) -> pd.Series:
+    if not is_text(series):
+        return pd.to_numeric(series, errors="coerce")
+    s = series.astype("string").str.strip().str.replace(r"[R$\s%]", "", regex=True)
+    if decimal_comma:
+        s = s.str.replace(".", "", regex=False).str.replace(",", ".", regex=False)
+    return pd.to_numeric(s, errors="coerce")
+
+
+def types_step(df, conversions: dict, decimal_comma=False, dayfirst=True):
+    log = []
+    for col, target in conversions.items():
+        before = df[col].isna().sum()
+        if target == "número":
+            df[col] = parse_number(df[col], decimal_comma)
+        elif target == "inteiro":
+            df[col] = parse_number(df[col], decimal_comma).round().astype("Int64")
+        elif target == "data":
+            df[col] = pd.to_datetime(df[col], errors="coerce", dayfirst=dayfirst)
+        elif target == "texto":
+            df[col] = df[col].astype("string")
+        elif target == "categoria":
+            df[col] = df[col].astype("category")
+        elif target == "booleano":
+            mapping = {"true": True, "false": False, "sim": True, "não": False, "nao": False,
+                       "s": True, "n": False, "1": True, "0": False, "yes": True, "no": False}
+            df[col] = df[col].astype("string").str.strip().str.lower().map(mapping).astype("boolean")
+        lost = int(df[col].isna().sum() - before)
+        msg = f"'{col}' convertida para {target}"
+        if lost > 0:
+            msg += f" ({lost} valores inválidos viraram nulos)"
+        log.append(msg)
+    return df, log
+
+
+def text_step(df, columns, strip=True, collapse_spaces=True, case="manter",
+              accents=False, special=False, empty_as_null=True):
+    log = []
+    for col in columns:
+        s = df[col].astype("string")
+        if strip:
+            s = s.str.strip()
+        if collapse_spaces:
+            s = s.str.replace(r"\s+", " ", regex=True)
+        if case == "minúsculas":
+            s = s.str.lower()
+        elif case == "MAIÚSCULAS":
+            s = s.str.upper()
+        elif case == "Título":
+            s = s.str.title()
+        if accents:
+            s = s.map(lambda x: remove_accents(x) if isinstance(x, str) else x).astype("string")
+        if special:
+            s = s.str.replace(r"[^\w\s\.,@\-]", "", regex=True)
+        if empty_as_null:
+            s = s.mask(s.str.strip().str.lower().isin(NULL_TOKENS))
+        df[col] = s
+    if columns:
+        log.append(f"Texto padronizado em {len(columns)} coluna(s)")
+    return df, log
+
+
+def duplicates_nulls_step(df, drop_duplicates=False, dup_subset=None, keep="first",
+                          drop_null_rows_in=None, drop_cols_threshold=None):
+    log = []
+    if drop_duplicates:
+        n = len(df)
+        df = df.drop_duplicates(subset=dup_subset or None, keep=keep)
+        log.append(f"{n - len(df)} linha(s) duplicada(s) removida(s)")
+    if drop_null_rows_in:
+        n = len(df)
+        df = df.dropna(subset=drop_null_rows_in)
+        log.append(f"{n - len(df)} linha(s) com nulos em {drop_null_rows_in} removida(s)")
+    if drop_cols_threshold is not None:
+        pct = df.isna().mean() * 100
+        cols = pct[pct > drop_cols_threshold].index.tolist()
+        if cols:
+            df = df.drop(columns=cols)
+            log.append(f"Colunas com mais de {drop_cols_threshold}% de nulos excluídas: {cols}")
+    return df, log
+
+
+def _is_int(series: pd.Series) -> bool:
+    return pd.api.types.is_integer_dtype(series)
+
+
+def _fill(series: pd.Series, value) -> pd.Series:
+    """fillna que arredonda o valor quando a coluna é inteira (ex.: média em Int64)."""
+    if _is_int(series) and isinstance(value, float):
+        value = round(value)
+    return series.fillna(value)
+
+
+def impute_step(df, columns, method, fixed_value=None, skew_limit=0.5):
+    log = []
+    for col in columns:
+        n_null = int(df[col].isna().sum())
+        if n_null == 0:
+            continue
+        s = df[col]
+        numeric = pd.api.types.is_numeric_dtype(s) and not pd.api.types.is_bool_dtype(s)
+        used = method
+        if method == "automática (Pearson)":
+            if numeric:
+                sk = pearson_skewness(s)
+                used = "média" if abs(sk) < skew_limit else "mediana"
+                used += f" (assimetria = {sk:.2f})"
+                value = s.mean() if abs(sk) < skew_limit else s.median()
+            else:
+                used = "moda (coluna não numérica)"
+                value = s.mode().iloc[0] if not s.mode().empty else None
+            df[col] = _fill(s, value)
+        elif method in ("média", "mediana", "interpolação linear") and not numeric:
+            log.append(f"'{col}' ignorada: {method} exige coluna numérica")
+            continue
+        elif method == "média":
+            df[col] = _fill(s, s.mean())
+        elif method == "mediana":
+            df[col] = _fill(s, float(s.median()))
+        elif method == "moda":
+            mode = s.mode()
+            if not mode.empty:
+                df[col] = s.fillna(mode.iloc[0])
+        elif method == "valor fixo":
+            value = fixed_value
+            if numeric:
+                try:
+                    value = float(str(fixed_value).replace(",", "."))
+                except ValueError:
+                    log.append(f"'{col}' ignorada: valor fixo não é numérico")
+                    continue
+            df[col] = _fill(s, value)
+        elif method == "forward fill":
+            df[col] = s.ffill()
+        elif method == "backward fill":
+            df[col] = s.bfill()
+        elif method == "interpolação linear":
+            filled = s.astype(float).interpolate(limit_direction="both")
+            df[col] = filled.round().astype(s.dtype) if _is_int(s) else filled
+        filled = n_null - int(df[col].isna().sum())
+        log.append(f"'{col}': {filled} nulo(s) preenchido(s) com {used}")
+    return df, log
+
+
+def outlier_bounds(series: pd.Series, method: str, factor: float) -> tuple[float, float]:
+    s = series.dropna()
+    if method == "IQR":
+        q1, q3 = s.quantile(0.25), s.quantile(0.75)
+        iqr = q3 - q1
+        return q1 - factor * iqr, q3 + factor * iqr
+    mean, std = s.mean(), s.std()
+    return mean - factor * std, mean + factor * std
+
+
+def outliers_step(df, columns, method="IQR", factor=1.5, action="remover linhas"):
+    log = []
+    mask_remove = pd.Series(False, index=df.index)
+    for col in columns:
+        low, high = outlier_bounds(df[col], method, factor)
+        is_out = (df[col] < low) | (df[col] > high)
+        n = int(is_out.sum())
+        if action == "remover linhas":
+            mask_remove |= is_out
+        elif action == "limitar (winsorizar)":
+            clipped = df[col].astype(float).clip(low, high)
+            df[col] = clipped.round().astype(df[col].dtype) if _is_int(df[col]) else clipped
+        elif action == "substituir por nulo":
+            df[col] = df[col].mask(is_out)
+        log.append(f"'{col}': {n} outlier(s) [{method}, limites {low:.2f} a {high:.2f}] → {action}")
+    if action == "remover linhas" and columns:
+        df = df[~mask_remove]
+        log.append(f"{int(mask_remove.sum())} linha(s) com outliers removida(s)")
+    return df, log
+
+
+OPERATORS = ["==", "!=", ">", ">=", "<", "<=", "contém", "não contém", "é nulo", "não é nulo"]
+
+
+def filter_step(df, filters: list[dict]):
+    log = []
+    for f in filters:
+        col, op, raw = f["column"], f["operator"], f.get("value", "")
+        s = df[col]
+        value = raw
+        if pd.api.types.is_numeric_dtype(s) and op in ("==", "!=", ">", ">=", "<", "<="):
+            try:
+                value = float(str(raw).replace(",", "."))
+            except ValueError:
+                log.append(f"Filtro em '{col}' ignorado: valor '{raw}' não é numérico")
+                continue
+        elif pd.api.types.is_datetime64_any_dtype(s) and op in ("==", "!=", ">", ">=", "<", "<="):
+            value = pd.to_datetime(raw, dayfirst=True, errors="coerce")
+        ops = {
+            "==": lambda: s == value, "!=": lambda: s != value,
+            ">": lambda: s > value, ">=": lambda: s >= value,
+            "<": lambda: s < value, "<=": lambda: s <= value,
+            "contém": lambda: s.astype("string").str.contains(str(raw), case=False, na=False, regex=False),
+            "não contém": lambda: ~s.astype("string").str.contains(str(raw), case=False, na=False, regex=False),
+            "é nulo": lambda: s.isna(), "não é nulo": lambda: s.notna(),
+        }
+        try:
+            mask = ops[op]().fillna(False).astype(bool)
+        except TypeError:
+            log.append(f"Filtro em '{col}' ignorado: comparação inválida para o tipo da coluna")
+            continue
+        n = len(df)
+        df = df[mask]
+        log.append(f"Filtro '{col} {op} {raw}': {n - len(df)} linha(s) removida(s)")
+    return df, log
+
+
+def run_pipeline(df: pd.DataFrame, cfg: dict) -> tuple[pd.DataFrame, list[str]]:
+    """Aplica as etapas na ordem: colunas → tipos → texto → duplicatas/nulos → imputação → outliers → filtros."""
+    df = df.copy()
+    log: list[str] = []
+
+    def existing(cols):
+        return [c for c in (cols or []) if c in df.columns]
+
+    df, l = columns_step(df, cfg.get("drop_columns"), cfg.get("rename"), cfg.get("snake_case", False))
+    log += l
+    # Após renomear, as demais etapas referenciam os nomes novos
+    conversions = {c: t for c, t in cfg.get("conversions", {}).items() if c in df.columns}
+    df, l = types_step(df, conversions, cfg.get("decimal_comma", False), cfg.get("dayfirst", True))
+    log += l
+    # Texto só se aplica a colunas que continuam textuais após a conversão de tipos
+    text_cols = [c for c in existing(cfg.get("text_columns")) if is_text(df[c])]
+    df, l = text_step(df, text_cols, **cfg.get("text_options", {}))
+    log += l
+    dup_null = dict(cfg.get("dup_null", {}))
+    dup_null["dup_subset"] = existing(dup_null.get("dup_subset"))
+    dup_null["drop_null_rows_in"] = existing(dup_null.get("drop_null_rows_in"))
+    df, l = duplicates_nulls_step(df, **dup_null)
+    log += l
+    if existing(cfg.get("impute_columns")):
+        df, l = impute_step(df, existing(cfg["impute_columns"]), cfg["impute_method"], cfg.get("fixed_value"), cfg.get("skew_limit", 0.5))
+        log += l
+    outlier_cols = [c for c in existing(cfg.get("outlier_columns")) if pd.api.types.is_numeric_dtype(df[c])]
+    if outlier_cols:
+        df, l = outliers_step(df, outlier_cols, cfg["outlier_method"], cfg["outlier_factor"], cfg["outlier_action"])
+        log += l
+    df, l = filter_step(df, [f for f in cfg.get("filters", []) if f["column"] in df.columns])
+    log += l
+    return df.reset_index(drop=True), log
+
+
+# --------------------------------------------------------------------------- #
+# Exportação
+# --------------------------------------------------------------------------- #
+def to_csv_bytes(df: pd.DataFrame, sep: str = ",") -> bytes:
+    return df.to_csv(index=False, sep=sep).encode("utf-8-sig")
+
+
+def to_excel_bytes(df: pd.DataFrame) -> bytes:
+    buffer = io.BytesIO()
+    out = df.copy()
+    for col in out.select_dtypes(include=["datetimetz"]).columns:
+        out[col] = out[col].dt.tz_localize(None)
+    out.to_excel(buffer, index=False, engine="openpyxl")
+    return buffer.getvalue()
