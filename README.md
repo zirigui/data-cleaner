@@ -1,27 +1,26 @@
-# Limpador de Dados
+# DataClean — Limpador de Dados
 
-Aplicativo Streamlit para limpar arquivos CSV, TXT, Excel, JSON e Parquet, em quatro etapas:
+Aplicativo Streamlit para limpar arquivos CSV, TSV, TXT, Excel, JSON e Parquet em três etapas:
 
-1. **Carregar**: envio do arquivo e apresentação do que o limpador faz
-2. **Diagnóstico**: nulos por coluna, distribuição (histograma + boxplot com média, mediana e assimetria de Pearson), valores mais frequentes e correlação
-3. **Limpeza**: as operações abaixo, organizadas em abas
-4. **Resultado**: comparação antes/depois (nulos e distribuição), registro das operações e download em CSV ou Excel
-
-Os gráficos são monocromáticos, acompanham o modo claro/escuro do sistema e têm uma tabela equivalente em "Ver dados do gráfico".
+1. **Carregar**: arraste o arquivo (separador e planilha podem ser ajustados depois, no ícone de opções do cartão do arquivo)
+2. **Tratar**: painel com qualidade antes → depois, substituições manuais, completude por coluna, gráficos e um card por coluna com a estratégia de tratamento
+3. **Exportar**: indicadores, log de alterações, gráficos de antes e depois, tabela com as células imputadas destacadas e download em CSV, Excel ou JSON
 
 ## Funcionalidades
 
-| Seção | O que faz |
+| Onde | O que faz |
 |---|---|
-| Duplicatas e nulos | Remove duplicatas (por todas ou algumas colunas), linhas com nulos e colunas acima de um % de nulos |
-| Texto | Remove espaços, padroniza maiúsculas/minúsculas, remove acentos e caracteres especiais, converte "NA", "null", "-" em nulo |
-| Tipos e colunas | Exclui, renomeia, padroniza nomes (snake_case), converte tipos (número BR `1.234,56`, data `dd/mm/aaaa`, booleano, etc.) |
-| Imputação | Média, mediana, moda, valor fixo, forward/backward fill, interpolação e **automática**, que usa a assimetria de Pearson |
-| Outliers e filtros | IQR ou Z-score com remoção, winsorização ou troca por nulo, e filtros por condição |
+| Detecção de tipo | Identifica cada coluna como numérica, categórica, booleana, data ou texto (inclui número BR `1.234,56`, datas `dd/mm/aaaa` e VERDADEIRO/FALSO, sim/não). O tipo pode ser trocado no menu ⋮ do card |
+| Substituições manuais | Escolha a coluna (ou todas), selecione um valor existente ou digite, e defina o novo valor. Modos exato, contém e regex, com opção de diferenciar maiúsculas. Substituir por vazio vira nulo |
+| Deduplicação automática | Remove linhas repetidas (pode ser desligada em *Mais opções*) |
+| Imputação por coluna | Média, mediana, moda, anterior (forward fill), seguinte (backward fill), interpolação ou preservar. A sugestão inicial usa a assimetria de Pearson |
+| Outliers por IQR | Manter, limitar ao intervalo, tornar nulo ou remover a linha, por coluna |
+| Gráficos | Nulos por coluna, distribuição (histograma + boxplot), valores mais frequentes, correlação e comparações antes/depois |
+| Mais opções | Maiúsculas/minúsculas, acentos, caracteres especiais, excluir e renomear colunas, remover linhas com nulos, fator IQR, limite de assimetria e filtros por condição |
 
-**Imputação automática:** calcula a assimetria de Pearson `3·(média − mediana) / desvio padrão`. Se |assimetria| < limite (padrão 0,5), usa a **média**; caso contrário, usa a **mediana**. Colunas de texto usam a **moda**.
+**Sugestão de imputação:** calcula a assimetria de Pearson `3·(média − mediana) / desvio padrão`. Se |assimetria| < limite (padrão 0,5), sugere a **média**; caso contrário, a **mediana**. Colunas categóricas e booleanas usam a **moda**, datas repetem o valor anterior e texto livre é preservado.
 
-A ordem de execução é: colunas → tipos → texto → duplicatas/nulos → imputação → outliers → filtros.
+A ordem de execução é: colunas → texto → substituições manuais → tipos → duplicatas → linhas com nulos → outliers → imputação → filtros.
 
 ## Rodar localmente
 
@@ -34,10 +33,10 @@ Há um arquivo de teste em `exemplos/dados_sujos.csv`.
 
 ## Estrutura
 
-- `app.py`: interface em etapas
-- `cleaner.py`: leitura, diagnóstico e operações de limpeza
+- `app.py`: interface em etapas (Carregar, Tratar, Exportar)
+- `cleaner.py`: leitura, detecção de tipo, diagnóstico e operações de limpeza
 - `charts.py`: gráficos (Altair), agregados em Python para suportar arquivos grandes
-- `.streamlit/config.toml`: tema preto e branco e barra de ferramentas oculta
+- `.streamlit/config.toml`: tema escuro e barra de ferramentas oculta
 
 ## Publicar no Streamlit Community Cloud
 

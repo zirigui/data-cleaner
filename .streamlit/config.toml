@@ -1,21 +1,15 @@
 [theme]
-font = "sans-serif"
-baseRadius = "small"
+base = "dark"
+font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+codeFont = "'JetBrains Mono':https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap"
+baseRadius = "medium"
 showWidgetBorder = true
-
-[theme.light]
-primaryColor = "#1a1a1a"
-backgroundColor = "#ffffff"
-secondaryBackgroundColor = "#f5f5f5"
-textColor = "#1a1a1a"
-borderColor = "#e0e0e0"
-
-[theme.dark]
-primaryColor = "#ececec"
-backgroundColor = "#0e1117"
-secondaryBackgroundColor = "#1a1c22"
-textColor = "#ececec"
-borderColor = "#2e3038"
+primaryColor = "#6366f1"
+backgroundColor = "#07090f"
+secondaryBackgroundColor = "#0f131c"
+textColor = "#e5e7eb"
+borderColor = "#1f2533"
+linkColor = "#818cf8"
 
 [server]
 maxUploadSize = 200

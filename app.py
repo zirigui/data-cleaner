@@ -1,61 +1,288 @@
+import hashlib
+import html
+import json
+
 import pandas as pd
 import streamlit as st
 
-import charts as ch
 import cleaner as cl
+import charts as ch
 
-st.set_page_config(page_title="Limpador de Dados", page_icon=":material/cleaning_services:", layout="wide")
+st.set_page_config(page_title="DataClean", page_icon=":material/cleaning_services:", layout="wide")
 
-STEPS = ["Carregar", "Diagnóstico", "Limpeza", "Resultado"]
+STEPS = ["Carregar", "Tratar", "Exportar"]
 SEPARATORS = {"Automático": None, "Vírgula (,)": ",", "Ponto e vírgula (;)": ";", "Tab": "\t", "Barra vertical (|)": "|"}
-TYPE_TARGETS = ["número", "inteiro", "data", "texto", "categoria", "booleano"]
-IMPUTE_METHODS = ["automática (Pearson)", "média", "mediana", "moda", "valor fixo",
-                  "forward fill", "backward fill", "interpolação linear"]
+UPLOAD_TYPES = ["csv", "tsv", "txt", "json", "xlsx", "xls", "parquet"]
 FEATURES = [
-    ("Nulos e duplicatas", "Remove linhas repetidas, linhas com valores ausentes e colunas vazias demais."),
-    ("Texto", "Tira espaços extras, padroniza maiúsculas e minúsculas, remove acentos e símbolos."),
-    ("Tipos e colunas", "Converte números no formato brasileiro, datas e booleanos; renomeia e exclui colunas."),
-    ("Imputação", "Preenche nulos com média, mediana, moda, valor fixo, forward/backward fill ou interpolação."),
-    ("Assimetria de Pearson", "No modo automático, escolhe entre média e mediana conforme a assimetria de cada coluna."),
-    ("Outliers e filtros", "Detecta valores extremos por IQR ou Z-score e mantém só as linhas que interessam."),
+    ("Deduplicação automática", "cyan"), ("Detecção de tipo", "violet"), ("Imputação estatística", "green"),
+    ("Assimetria de Pearson", "amber"), ("Outliers por IQR", "orange"), ("Forward / Backward fill", "blue"),
 ]
+KIND_STYLE = {"numérico": ("NUM", "cyan"), "categórico": ("CAT", "violet"), "booleano": ("BOOL", "blue"),
+              "data": ("DATA", "pink"), "texto": ("TXT", "slate")}
+KIND_FILTERS = {"Numérico": "numérico", "Categórico": "categórico", "Booleano": "booleano", "Data": "data",
+                "Texto": "texto"}
+IMPUTE_LABELS = {"média": "Média", "mediana": "Mediana", "moda": "Moda", "anterior": "Anterior",
+                 "seguinte": "Seguinte", "interpolar": "Interpolar", "preservar": "Preservar"}
+IMPUTE_HELP = {
+    "média": "Preenche com a média da coluna.",
+    "mediana": "Preenche com a mediana, menos sensível a valores extremos.",
+    "moda": "Preenche com o valor mais frequente.",
+    "anterior": "Forward fill: repete o valor da linha anterior.",
+    "seguinte": "Backward fill: usa o valor da linha seguinte.",
+    "interpolar": "Interpolação linear entre os vizinhos.",
+    "preservar": "Os nulos são mantidos.",
+}
+OUTLIER_LABELS = {"manter": "Manter", "limitar": "Limitar", "nulo": "Tornar nulo", "remover": "Remover linha"}
 PREVIEW_ROWS = 1000
 
-st.markdown(
+st.html(
     """
     <style>
-    /* Sem barra de ferramentas (links para GitHub, fork, menu) */
+    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap');
+    :root {
+      --bg: #07090f; --surface: #0c1018; --surface-2: #121722; --border: #1c2230; --text: #e5e7eb;
+      --muted: #6b7488; --faint: #3a4254; --accent: #6366f1;
+      --cyan: #22d3ee; --violet: #a78bfa; --green: #10b981; --amber: #f59e0b; --orange: #f97316;
+      --red: #ef4444; --blue: #60a5fa; --pink: #f472b6; --slate: #94a3b8;
+      --mono: 'JetBrains Mono', ui-monospace, monospace;
+    }
     [data-testid="stToolbar"], [data-testid="stToolbarActions"], .stAppDeployButton,
-    [data-testid="stMainMenu"], #MainMenu { display: none !important; }
-    header[data-testid="stHeader"] { background: transparent; }
-    .block-container { max-width: 1100px; padding-top: 2.5rem; }
+    [data-testid="stMainMenu"], #MainMenu, [data-testid="stDecoration"] { display: none !important; }
+    header[data-testid="stHeader"] { height: 0; background: transparent; }
+    .block-container { max-width: 1280px; padding: 1rem 1.25rem 3rem; }
 
-    .stepper { display: flex; margin: .25rem 0 2rem; border-bottom: 1px solid rgba(128,128,128,.25); }
-    .stepper .step { flex: 1; padding: .6rem 0; font-size: .9rem; opacity: .45;
-                     border-bottom: 2px solid transparent; margin-bottom: -1px; }
-    .stepper .step b { font-weight: 600; margin-right: .5rem; }
-    .stepper .step.done { opacity: .75; }
-    .stepper .step.current { opacity: 1; border-bottom-color: currentColor; font-weight: 600; }
-    .feature h4 { font-size: 1rem; font-weight: 600; margin: 0 0 .25rem; padding: 0; }
-    .feature p { font-size: .9rem; opacity: .7; margin: 0; }
+    /* Cards */
+    div[class*="st-key-card"] { background: var(--surface); border: 1px solid var(--border) !important;
+                                border-radius: 14px; padding: 1.1rem 1.25rem; }
+    div[class*="st-key-colcard"] { background: var(--surface); border: 1px solid var(--border) !important;
+                                   border-radius: 14px; padding: 1rem 1.1rem; }
+    /* Linhas internas dos cards não quebram no celular */
+    div[class*="st-key-colcard"] [data-testid="stHorizontalBlock"],
+    .st-key-card_file [data-testid="stHorizontalBlock"] { flex-wrap: nowrap; }
+    div[class*="st-key-colcard"] [data-testid="stColumn"],
+    .st-key-card_file [data-testid="stColumn"] { min-width: 0 !important; }
+    div[class*="st-key-colcard"]:hover { border-color: #2a3244 !important; }
+    [data-testid="stExpander"] details { background: var(--surface); border: 1px solid var(--border);
+                                         border-radius: 14px; }
+    [data-testid="stExpander"] summary { padding: .9rem 1.2rem; }
+
+    /* Cabeçalho */
+    .dc-brand { display: flex; align-items: center; gap: .65rem; font-weight: 700; font-size: 1.05rem;
+                height: 42px; }
+    .dc-logo { width: 30px; height: 30px; border-radius: 8px; background: #161a2e; border: 1px solid #262c48;
+               display: grid; place-items: center; }
+    .dc-logo i { display: grid; grid-template-columns: 6px 6px; gap: 2px; }
+    .dc-logo b { width: 6px; height: 6px; border-radius: 1.5px; background: #818cf8; }
+    .dc-logo b:nth-child(4) { background: #3b3f73; }
+    .dc-stepper { display: flex; align-items: center; justify-content: center; gap: .6rem; height: 42px; }
+    .dc-step { display: flex; align-items: center; gap: .5rem; font-size: .88rem; color: var(--faint);
+               white-space: nowrap; }
+    .dc-step .n { width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center;
+                  font-size: .72rem; font-weight: 600; background: #141925; color: var(--muted); }
+    .dc-step.current { color: var(--text); font-weight: 600; }
+    .dc-step.current .n { background: var(--accent); color: white; }
+    .dc-step.done { color: var(--green); font-weight: 500; }
+    .dc-step.done .n { background: var(--green); color: #04130d; }
+    .dc-line { width: 48px; height: 1px; background: var(--border); }
+    .dc-rule { border-bottom: 1px solid var(--border); margin: .5rem -1.25rem 1.25rem; }
+    @media (max-width: 640px) { .dc-line { width: 14px; } .dc-step .t { display: none; }
+                                .dc-step.current .t { display: inline; } }
+
+    /* Upload: a área inteira abre o seletor de arquivos */
+    section[data-testid="stFileUploaderDropzone"] {
+      position: relative; min-height: 280px; border: 1.5px dashed #232a3a; border-radius: 16px;
+      background: transparent; display: flex; flex-direction: column; justify-content: center;
+      align-items: center; padding: 2.5rem 1rem; transition: border-color .15s, background .15s; }
+    section[data-testid="stFileUploaderDropzone"]:hover { border-color: var(--accent);
+                                                          background: rgba(99,102,241,.04); }
+    section[data-testid="stFileUploaderDropzone"] > span { position: absolute; inset: 0; z-index: 2; }
+    section[data-testid="stFileUploaderDropzone"] > span button { width: 100%; height: 100%; opacity: 0;
+                                                                  cursor: pointer; }
+    [data-testid="stFileUploaderDropzoneInstructions"] { margin: 0; text-align: center; }
+    [data-testid="stFileUploaderDropzoneInstructions"] > div > span { display: none; }
+    [data-testid="stFileUploaderDropzoneInstructions"] > div::before {
+      content: "↑"; display: grid; place-items: center; width: 60px; height: 60px; margin: 0 auto 1.4rem;
+      border-radius: 14px; background: var(--surface-2); border: 1px solid var(--border); color: var(--muted);
+      font-size: 1.5rem; }
+    [data-testid="stFileUploaderDropzoneInstructions"]::before {
+      content: "Arraste um arquivo ou clique para selecionar"; display: block; font-size: 1.15rem;
+      font-weight: 600; color: var(--text); margin-bottom: .45rem; order: 2; }
+    [data-testid="stFileUploaderDropzoneInstructions"]::after {
+      content: ".csv · .tsv · .txt · .json · .xlsx · .parquet"; display: block; font-family: var(--mono);
+      font-size: .8rem; color: var(--muted); order: 3; }
+    [data-testid="stFileUploaderDropzoneInstructions"] { display: flex; flex-direction: column; }
+    [data-testid="stFileUploaderDropzoneInstructions"] > div { order: 1; }
+    .dc-chips { display: grid; grid-template-columns: repeat(3, minmax(0, 180px)); gap: .5rem;
+                justify-content: center; margin-top: 1.25rem; }
+    @media (max-width: 640px) { .dc-chips { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+    .dc-chip { font-family: var(--mono); font-size: .75rem; text-align: center; padding: .7rem .5rem;
+               border-radius: 10px; border: 1px solid; }
+
+    /* Tipografia utilitária */
+    .dc-mono { font-family: var(--mono); }
+    .dc-label { font-family: var(--mono); font-size: .68rem; letter-spacing: .06em; text-transform: uppercase;
+                color: var(--muted); }
+    .dc-title { font-size: .82rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
+                color: #c7cbd6; margin-bottom: .75rem; }
+    .dc-small { font-family: var(--mono); font-size: .72rem; color: var(--muted); }
+    .c-cyan { color: var(--cyan); } .c-violet { color: var(--violet); } .c-green { color: var(--green); }
+    .c-amber { color: var(--amber); } .c-orange { color: var(--orange); } .c-red { color: var(--red); }
+    .c-blue { color: var(--blue); } .c-pink { color: var(--pink); } .c-slate { color: var(--slate); }
+    .c-muted { color: var(--muted); } .c-accent { color: #818cf8; }
+    .bg-cyan { background: rgba(34,211,238,.06); border-color: rgba(34,211,238,.22) !important; }
+    .bg-violet { background: rgba(167,139,250,.07); border-color: rgba(167,139,250,.25) !important; }
+    .bg-green { background: rgba(16,185,129,.06); border-color: rgba(16,185,129,.22) !important; }
+    .bg-amber { background: rgba(245,158,11,.06); border-color: rgba(245,158,11,.22) !important; }
+    .bg-orange { background: rgba(249,115,22,.06); border-color: rgba(249,115,22,.22) !important; }
+    .bg-blue { background: rgba(96,165,250,.07); border-color: rgba(96,165,250,.25) !important; }
+    .bg-pink { background: rgba(244,114,182,.07); border-color: rgba(244,114,182,.25) !important; }
+    .bg-slate { background: rgba(148,163,184,.07); border-color: rgba(148,163,184,.25) !important; }
+    .bg-red { background: rgba(239,68,68,.06); border-color: rgba(239,68,68,.22) !important; }
+
+    /* Arquivo */
+    .dc-file { display: flex; align-items: center; gap: .9rem; }
+    .dc-file .name { font-weight: 600; font-size: .92rem; }
+    .dc-file .ico { color: #818cf8; }
+    .dc-dims { display: flex; gap: 1.5rem; justify-content: flex-end; text-align: center; }
+    .dc-dims b { display: block; font-size: 1.05rem; font-weight: 600; }
+
+    /* KPIs */
+    .dc-kpis { display: flex; flex-wrap: wrap; align-items: center; gap: 1.5rem 2.5rem; }
+    .dc-rings { display: flex; align-items: center; gap: 1rem; }
+    .dc-ring { text-align: center; }
+    .dc-ring .dial { width: 72px; height: 72px; border-radius: 50%; display: grid; place-items: center;
+                     margin: 0 auto; }
+    .dc-ring .dial span { width: 58px; height: 58px; border-radius: 50%; background: var(--surface);
+                          display: grid; place-items: center; font-family: var(--mono); font-size: .8rem;
+                          font-weight: 600; }
+    .dc-ring .cap { font-family: var(--mono); font-size: .72rem; color: var(--muted); margin-top: .35rem; }
+    .dc-arrow { text-align: center; font-family: var(--mono); font-size: .7rem; }
+    .dc-kpi { min-width: 150px; flex: 1; }
+    .dc-kpi b { display: block; font-size: 1.9rem; font-weight: 700; line-height: 1.1; }
+    @media (max-width: 640px) { .dc-kpi { flex: 1 1 40%; min-width: 120px; } }
+    .dc-kpi span { font-family: var(--mono); font-size: .72rem; color: var(--muted); }
+
+    /* Completude */
+    .dc-comp { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: .55rem 2.5rem; }
+    .dc-comp-row { display: grid; grid-template-columns: 44px minmax(60px, 140px) 1fr 44px; align-items: center;
+                   gap: .75rem; font-size: .85rem; }
+    .dc-comp-row .pct { font-family: var(--mono); font-size: .72rem; text-align: right; }
+    .dc-bar { height: 7px; border-radius: 99px; background: #1a2030; overflow: hidden; }
+    .dc-bar > i { display: block; height: 100%; border-radius: 99px; }
+    .dc-badge { font-family: var(--mono); font-size: .62rem; font-weight: 600; padding: .15rem .4rem;
+                border-radius: 5px; border: 1px solid; text-align: center; letter-spacing: .04em;
+                display: inline-block; }
+    .dc-trunc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    /* Card de coluna */
+    .dc-colhead { display: flex; justify-content: space-between; align-items: center; gap: .5rem;
+                  margin-bottom: .8rem; }
+    .dc-colhead .name { font-weight: 700; font-size: 1rem; }
+    .dc-row { display: flex; justify-content: space-between; align-items: baseline; font-size: .82rem; }
+    .dc-row .v { font-family: var(--mono); font-size: .75rem; }
+    .dc-note { font-family: var(--mono); font-size: .68rem; color: var(--muted); margin: .4rem 0 .9rem; }
+    .dc-hist { display: flex; align-items: flex-end; gap: 2px; height: 46px; margin: .35rem 0 .6rem; }
+    .dc-hist i { flex: 1; background: #1a9bb3; border-radius: 1px 1px 0 0; min-height: 0; }
+    .dc-hist i.out { background: var(--orange); }
+    .dc-range { display: flex; justify-content: space-between; font-family: var(--mono); font-size: .66rem;
+                color: var(--muted); }
+    .dc-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: .35rem; margin: .5rem 0; }
+    .dc-stats div { background: var(--surface-2); border-radius: 8px; padding: .45rem .3rem; text-align: center; }
+    .dc-stats span { display: block; font-family: var(--mono); font-size: .6rem; color: var(--muted); }
+    .dc-stats b { font-family: var(--mono); font-size: .8rem; font-weight: 600; }
+    .dc-cats { display: grid; grid-template-columns: minmax(60px, 90px) 1fr 36px; gap: .45rem .7rem;
+               align-items: center; margin: .5rem 0 .6rem; font-family: var(--mono); font-size: .7rem; }
+    .dc-cats .pct { text-align: right; color: var(--muted); }
+    .dc-cats .dc-bar { height: 4px; }
+    .dc-meta { font-family: var(--mono); font-size: .68rem; color: var(--muted); display: flex; gap: .9rem;
+               flex-wrap: wrap; }
+    .dc-sep { border-top: 1px solid var(--border); margin: .9rem 0 .7rem; }
+    .dc-value { background: var(--surface-2); border-radius: 8px; padding: .5rem .7rem; font-family: var(--mono);
+                font-size: .75rem; color: var(--muted); margin: .45rem 0; }
+    .dc-value b { font-weight: 600; }
+    .dc-why { font-size: .72rem; color: var(--muted); line-height: 1.45; }
+    .dc-ok { font-family: var(--mono); font-size: .72rem; color: var(--green); }
+    .dc-pill { font-family: var(--mono); font-size: .68rem; padding: .2rem .5rem; border-radius: 6px;
+               border: 1px solid; }
+
+    /* Exportar */
+    .dc-stat-title { display: flex; align-items: center; gap: .5rem; font-weight: 600; font-size: .88rem; }
+    .dc-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+    .dc-stat-big { font-size: 2.2rem; font-weight: 700; margin: .5rem 0 .15rem; line-height: 1.1; }
+    .dc-log { display: flex; flex-direction: column; gap: .4rem; }
+    .dc-log div { display: grid; grid-template-columns: 14px minmax(90px, 150px) 1fr auto; gap: .75rem;
+                  align-items: center; background: var(--surface-2); border-radius: 8px; padding: .55rem .8rem;
+                  font-size: .84rem; }
+    .dc-log .col { font-family: var(--mono); font-weight: 600; font-size: .8rem; }
+    .dc-log .val { font-family: var(--mono); font-size: .75rem; color: var(--muted); text-align: right; }
+    @media (max-width: 640px) { .dc-log div { grid-template-columns: 14px 1fr; }
+                                .dc-log .val { grid-column: 2; text-align: left; } }
+
+    /* Widgets */
+    .stButton button, .stDownloadButton button { border-radius: 9px; font-weight: 600; }
+    [data-testid="stBaseButton-secondary"] { background: transparent; }
+    [data-testid="stButtonGroup"] button { font-family: var(--mono); font-size: .72rem; }
     </style>
-    """,
-    unsafe_allow_html=True,
+    """
 )
 
 # Streamlit descarta o estado de widgets que não aparecem na tela; reatribuir as
-# chaves mantém as opções da limpeza ao navegar entre as etapas.
+# chaves mantém as escolhas ao navegar entre as etapas.
 for _key in list(st.session_state.keys()):
     if _key.startswith("opt_"):
         st.session_state[_key] = st.session_state[_key]
 
 state = st.session_state
 state.setdefault("step", 1)
+state.setdefault("rules", [])
+for _key, _value in {"opt_null_tokens": True, "opt_dedup": True, "opt_iqr": 1.5, "opt_skew": 0.5,
+                     "opt_sort": "Nulos↓", "opt_csv_sep": ",", "opt_n_filters": 0}.items():
+    state.setdefault(_key, _value)
 
 
 # --------------------------------------------------------------------------- #
 # Utilidades
 # --------------------------------------------------------------------------- #
+def esc(value) -> str:
+    return html.escape(str(value))
+
+
+def fmt_int(n) -> str:
+    return f"{int(n):,}".replace(",", ".")
+
+
+def fmt_num(x: float) -> str:
+    if abs(x) >= 1000:
+        return f"{x:,.0f}".replace(",", ".")
+    return f"{x:,.2f}".rstrip("0").rstrip(".").replace(".", ",")
+
+
+def fmt_bytes(n: int) -> str:
+    for unit in ("B", "KB", "MB", "GB"):
+        if n < 1024 or unit == "GB":
+            return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}".replace(".", ",")
+        n /= 1024
+
+
+def col_key(col) -> str:
+    return hashlib.md5(str(col).encode()).hexdigest()[:10]
+
+
+def pct_color(pct: float) -> str:
+    return "green" if pct >= 99.95 else "amber" if pct >= 70 else "red"
+
+
+def go(step: int):
+    state.step = step
+    st.rerun()
+
+
+def reset_all():
+    for key in list(state.keys()):
+        if key.startswith("opt_") or key in ("file_id", "file_name", "file_data", "rules", "used_sep"):
+            del state[key]
+
+
 @st.cache_data(show_spinner="Lendo arquivo...")
 def load(data: bytes, name: str, sep: str | None, sheet: str | None):
     return cl.read_file(data, name, sep, sheet)
@@ -66,401 +293,620 @@ def sheets(data: bytes):
     return cl.excel_sheets(data)
 
 
-def go(step: int):
-    state.step = step
-    st.rerun()
-
-
-def fmt_int(n) -> str:
-    return f"{int(n):,}".replace(",", ".")
-
-
-def fmt_delta(n: int) -> str:
-    return f"{n:+d}" if n else "0"
-
-
-def reset_options():
-    for key in list(state.keys()):
-        if key.startswith("opt_") or key in ("cleaned", "log", "config"):
-            del state[key]
-
-
-def stepper(current: int):
-    items = []
-    for i, name in enumerate(STEPS, start=1):
-        cls = "current" if i == current else ("done" if i < current else "")
-        items.append(f'<div class="step {cls}"><b>{i}</b>{name}</div>')
-    st.markdown(f'<div class="stepper">{"".join(items)}</div>', unsafe_allow_html=True)
-
-
-def show_chart(chart, table: pd.DataFrame, empty_msg: str = "Nada a mostrar."):
-    if chart is None:
-        st.caption(empty_msg)
-        return
-    st.altair_chart(chart, width="stretch")
-    with st.expander("Ver dados do gráfico"):
-        st.dataframe(table, hide_index=True, width="stretch")
-
-
-def show_table(df: pd.DataFrame):
-    if len(df) > PREVIEW_ROWS:
-        st.caption(f"Primeiras {fmt_int(PREVIEW_ROWS)} de {fmt_int(len(df))} linhas")
-    try:
-        st.dataframe(df.head(PREVIEW_ROWS), width="stretch")
-    except Exception:
-        st.dataframe(df.head(PREVIEW_ROWS).astype(str), width="stretch")
-
-
-def metrics(df: pd.DataFrame):
-    return len(df), df.shape[1], int(df.isna().sum().sum()), int(df.duplicated().sum())
-
-
-def nav(back: int | None = None, forward: tuple[str, int] | None = None, forward_disabled=False):
-    st.write("")
-    left, _, right = st.columns([1, 3, 1])
-    if back and left.button("Voltar", icon=":material/arrow_back:", width="stretch"):
-        go(back)
-    if forward and right.button(forward[0], type="primary", width="stretch", disabled=forward_disabled):
-        go(forward[1])
-
-
-def current_data():
-    """DataFrame original do arquivo em memória (ou None)."""
+def raw_data():
     if "file_data" not in state:
         return None
     try:
-        df, used_sep = load(state.file_data, state.file_name, state.get("sep_value"), state.get("opt_sheet"))
-        state.used_sep = used_sep
+        df, used = load(state.file_data, state.file_name, SEPARATORS[state.get("opt_sep", "Automático")],
+                        state.get("opt_sheet"))
+        state.used_sep = used
         return df
     except Exception as e:
         st.error(f"Não foi possível ler o arquivo: {e}")
         return None
 
 
-def structured(df: pd.DataFrame, config: dict) -> pd.DataFrame:
-    """Aplica só as etapas de colunas e tipos (base para pré-visualizações e para o 'antes')."""
-    out, _ = cl.columns_step(df.copy(), config.get("drop_columns"), config.get("rename"),
-                             config.get("snake_case", False))
-    conv = {k: v for k, v in config.get("conversions", {}).items() if k in out.columns}
-    out, _ = cl.types_step(out, conv, config.get("decimal_comma", False), config.get("dayfirst", True))
-    return out
+@st.cache_data(show_spinner=False)
+def run_prepare(file_id: str, _df: pd.DataFrame, cfg_json: str):
+    return cl.prepare(_df, json.loads(cfg_json))
+
+
+@st.cache_data(show_spinner=False)
+def run_treat(file_id: str, _prep: pd.DataFrame, cfg_json: str, types_json: str):
+    return cl.treat(_prep, json.loads(cfg_json), json.loads(types_json))
+
+
+@st.cache_data(show_spinner=False)
+def profiles(file_id: str, _prep: pd.DataFrame, cfg_json: str, types_json: str):
+    types, factor = json.loads(types_json), json.loads(cfg_json).get("iqr_factor", 1.5)
+    return {c: cl.column_profile(_prep[c], types[c], factor) for c in _prep.columns}
+
+
+def base_config() -> dict:
+    """Configuração da estruturação (antes do tratamento estatístico)."""
+    return {
+        "rules": state.rules,
+        "drop": state.get("opt_drop", []),
+        "rename": {c: state.get(f"opt_rename_{col_key(c)}", c) for c in state.get("opt_rename_cols", [])},
+        "types": {c: t for c, t in state.get("type_overrides", {}).items()},
+        "text": {"case": state.get("opt_case", "manter"), "accents": state.get("opt_accents", False),
+                 "special": state.get("opt_special", False), "empty_as_null": state.get("opt_null_tokens", True)},
+        "dedup": state.get("opt_dedup", True),
+    }
+
+
+def treat_config(columns) -> dict:
+    per_col = {}
+    for c in columns:
+        k = col_key(c)
+        per_col[c] = {"impute": state.get(f"opt_imp_{k}"), "outliers": state.get(f"opt_out_{k}", "manter")}
+    filters = []
+    for i in range(int(state.get("opt_n_filters", 0))):
+        if state.get(f"opt_fcol_{i}") is not None:
+            filters.append({"column": state.get(f"opt_fcol_{i}"), "operator": state.get(f"opt_fop_{i}", "=="),
+                            "value": state.get(f"opt_fval_{i}", "")})
+    return {"columns": per_col, "drop_null_rows": state.get("opt_null_rows", []),
+            "iqr_factor": state.get("opt_iqr", 1.5), "skew_limit": state.get("opt_skew", 0.5), "filters": filters}
+
+
+def pipeline():
+    """Executa as duas fases da limpeza com cache. Retorna um dicionário com tudo que as telas usam."""
+    raw = raw_data()
+    if raw is None:
+        return None
+    for key in list(state.get("type_overrides", {})):
+        if f"opt_type_{col_key(key)}" not in state:
+            state.type_overrides.pop(key)
+    cfg = base_config()
+    cfg_json = json.dumps(cfg, default=str, sort_keys=True)
+    fid = f'{state.file_id}|{state.get("opt_sep")}|{state.get("opt_sheet")}'
+    try:
+        prep, plog, types = run_prepare(fid, raw, cfg_json)
+    except Exception as e:
+        st.error(f"Erro ao preparar os dados: {e}")
+        return None
+    tcfg = treat_config(prep.columns)
+    tcfg_json, types_json = json.dumps(tcfg, default=str, sort_keys=True), json.dumps(types, sort_keys=True)
+    try:
+        out, tlog, imputed, counts = run_treat(fid + cfg_json, prep, tcfg_json, types_json)
+    except Exception as e:
+        st.error(f"Erro ao tratar os dados: {e}")
+        return None
+    profs = profiles(fid + cfg_json, prep, tcfg_json, types_json)
+    return {"raw": raw, "prep": prep, "types": types, "out": out, "imputed": imputed, "counts": counts,
+            "log": plog + tlog, "profiles": profs, "dups": len(raw) - len(prep)}
+
+
+# --------------------------------------------------------------------------- #
+# Cabeçalho
+# --------------------------------------------------------------------------- #
+def stepper_html(current: int) -> str:
+    parts = []
+    for i, name in enumerate(STEPS, start=1):
+        cls = "current" if i == current else "done" if i < current else ""
+        n = "✓" if i < current else str(i)
+        parts.append(f'<div class="dc-step {cls}"><span class="n">{n}</span><span class="t">{name}</span></div>')
+    return '<div class="dc-stepper">' + '<span class="dc-line"></span>'.join(parts) + "</div>"
+
+
+def header(result=None):
+    brand, steps, actions = st.columns([1.2, 3, 1.4], vertical_alignment="center")
+    brand.html('<div class="dc-brand"><span class="dc-logo"><i><b></b><b></b><b></b><b></b></i></span>'
+               "DataClean</div>")
+    steps.html(stepper_html(state.step))
+    if state.step > 1:
+        a1, a2 = actions.columns(2)
+        if a1.button("Trocar arquivo", width="stretch"):
+            reset_all()
+            go(1)
+        if state.step == 2:
+            if a2.button("Exportar", type="primary", icon=":material/arrow_forward:", icon_position="right",
+                         width="stretch"):
+                go(3)
+        elif result is not None:
+            with a2.popover("Baixar", icon=":material/download:", type="primary", width="stretch"):
+                download_buttons(result["out"], key="top")
+    st.html('<div class="dc-rule"></div>')
+
+
+def download_buttons(df: pd.DataFrame, key: str, primary: str = "json"):
+    base = state.file_name.rsplit(".", 1)[0] + "_limpo"
+    sep = state.get("opt_csv_sep", ",")
+    st.download_button("Baixar CSV", cl.to_csv_bytes(df, sep), f"{base}.csv", "text/csv", key=f"csv_{key}",
+                       icon=":material/download:", width="stretch")
+    try:
+        st.download_button("Baixar Excel", cl.to_excel_bytes(df), f"{base}.xlsx",
+                           "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key=f"xlsx_{key}",
+                           icon=":material/download:", width="stretch")
+    except Exception as e:
+        st.caption(f"Excel indisponível: {e}")
+    st.download_button("Baixar JSON", cl.to_json_bytes(df), f"{base}.json", "application/json",
+                       key=f"json_{key}", icon=":material/download:", width="stretch",
+                       type="primary" if primary == "json" else "secondary")
 
 
 # --------------------------------------------------------------------------- #
 # Etapa 1 — Carregar
 # --------------------------------------------------------------------------- #
 def step_upload():
-    st.markdown("Limpe e prepare seus dados em poucos passos.")
-    uploaded = st.file_uploader("Arquivo", type=["csv", "txt", "xlsx", "xls", "json", "parquet"],
-                                label_visibility="collapsed")
+    st.write("")
+    uploaded = st.file_uploader("Arquivo", type=UPLOAD_TYPES, label_visibility="collapsed", key="uploader")
+    chips = "".join(f'<div class="dc-chip c-{color} bg-{color}">{name}</div>' for name, color in FEATURES)
+    st.html(f'<div class="dc-chips">{chips}</div>')
     if uploaded is not None:
-        file_id = f"{uploaded.name}-{uploaded.size}"
-        if state.get("file_id") != file_id:
-            reset_options()
-            state.file_id, state.file_name, state.file_data = file_id, uploaded.name, uploaded.getvalue()
-
-    df = None
-    if "file_data" in state:
-        ext = state.file_name.rsplit(".", 1)[-1].lower()
-        c1, _ = st.columns([1, 2])
-        if ext in ("csv", "txt"):
-            label = c1.selectbox("Separador", list(SEPARATORS), key="opt_sep")
-            state.sep_value = SEPARATORS[label]
-        elif ext in ("xlsx", "xls"):
-            c1.selectbox("Planilha", sheets(state.file_data), key="opt_sheet")
-        df = current_data()
-        if df is not None:
-            detail = f"{fmt_int(len(df))} linhas · {df.shape[1]} colunas"
-            if state.get("used_sep") and ext in ("csv", "txt"):
-                detail += f" · separador {repr(state.used_sep)}"
-            st.caption(f"**{state.file_name}** — {detail}")
-            st.dataframe(df.head(5), width="stretch", hide_index=True)
-
-    st.write("")
-    st.subheader("O que o limpador faz")
-    for row in (FEATURES[:3], FEATURES[3:]):
-        cols = st.columns(3, gap="large")
-        for col, (title, text) in zip(cols, row):
-            col.markdown(f'<div class="feature"><h4>{title}</h4><p>{text}</p></div>', unsafe_allow_html=True)
-        st.write("")
-
-    nav(forward=("Avançar", 2), forward_disabled=df is None)
-
-
-# --------------------------------------------------------------------------- #
-# Etapa 2 — Diagnóstico
-# --------------------------------------------------------------------------- #
-def step_diagnosis(df: pd.DataFrame):
-    rows, cols, nulls, dups = metrics(df)
-    m = st.columns(4)
-    m[0].metric("Linhas", fmt_int(rows))
-    m[1].metric("Colunas", cols)
-    m[2].metric("Células nulas", fmt_int(nulls), f"{nulls / max(df.size, 1):.1%} do total", delta_color="off")
-    m[3].metric("Linhas duplicadas", fmt_int(dups))
-
-    num_cols, txt_cols = cl.numeric_columns(df), cl.text_columns(df)
-    t_nulls, t_dist, t_cat, t_corr, t_cols = st.tabs(["Nulos", "Distribuição", "Categorias", "Correlação", "Colunas"])
-
-    with t_nulls:
-        st.markdown("**Percentual de nulos por coluna**")
-        show_chart(*ch.nulls_bar(df), empty_msg="Nenhuma coluna tem valores nulos.")
-
-    with t_dist:
-        if not num_cols:
-            st.caption("Nenhuma coluna numérica. Converta colunas na etapa de Limpeza (Tipos e colunas).")
-        else:
-            c1, c2 = st.columns([2, 1], vertical_alignment="bottom")
-            col = c1.selectbox("Coluna", num_cols, key="diag_dist_col")
-            with_out = c2.toggle("Incluir outliers no eixo", key="diag_dist_out")
-            sk = cl.pearson_skewness(df[col])
-            st.markdown(f"**Distribuição de {col}** — assimetria de Pearson {sk:+.2f} ({cl.interpret_skewness(sk)})")
-            show_chart(*ch.distribution(df[col], include_outliers=with_out))
-
-    with t_cat:
-        if not txt_cols:
-            st.caption("Nenhuma coluna de texto.")
-        else:
-            col = st.selectbox("Coluna", txt_cols, key="diag_cat_col")
-            st.markdown(f"**Valores mais frequentes em {col}** — {fmt_int(df[col].nunique())} valores distintos")
-            show_chart(*ch.top_values(df[col]))
-
-    with t_corr:
-        st.markdown("**Correlação entre colunas numéricas** — o tom indica a força; o sinal, a direção")
-        show_chart(*ch.correlation(df), empty_msg="São necessárias ao menos duas colunas numéricas.")
-
-    with t_cols:
-        st.dataframe(cl.diagnose(df), hide_index=True, width="stretch")
-
-    nav(back=1, forward=("Avançar", 3))
-
-
-# --------------------------------------------------------------------------- #
-# Etapa 3 — Limpeza
-# --------------------------------------------------------------------------- #
-def default(key: str, value):
-    """Define o valor inicial de um widget pelo Session State e devolve a chave."""
-    state.setdefault(key, value)
-    return key
-
-
-CLEANING_DEFAULTS = {"opt_decimal": True, "opt_dayfirst": True, "opt_strip": True, "opt_collapse": True,
-                     "opt_empty": True, "opt_threshold": 50, "opt_skew": 0.5, "opt_n_filters": 0}
-
-
-def step_cleaning(df: pd.DataFrame):
-    for key, value in CLEANING_DEFAULTS.items():
-        state.setdefault(key, value)
-    st.caption("As operações são aplicadas nesta ordem: colunas → tipos → texto → "
-               "nulos e duplicatas → imputação → outliers → filtros.")
-    t_types, t_text, t_dup, t_imp, t_out, t_filt = st.tabs(
-        ["Tipos e colunas", "Texto", "Nulos e duplicatas", "Imputação", "Outliers", "Filtros"])
-    all_cols = df.columns.tolist()
-
-    with t_types:
-        c1, c2 = st.columns(2, gap="large")
-        drop_cols = c1.multiselect("Excluir colunas", all_cols, key="opt_drop")
-        remaining = [c for c in all_cols if c not in drop_cols]
-        to_rename = c1.multiselect("Renomear colunas", remaining, key="opt_rename_cols")
-        rename = {c: c1.text_input(f"Novo nome para {c}", key=default(f"opt_rename_{c}", str(c))) for c in to_rename}
-        snake = c1.checkbox("Padronizar nomes (snake_case)", key="opt_snake")
-
-        renamed, _ = cl.columns_step(df.head(0).copy(), drop_cols, rename, snake)
-        to_convert = c2.multiselect("Converter tipo de", renamed.columns.tolist(), key="opt_convert")
-        conversions = {c: c2.selectbox(f"{c} para", TYPE_TARGETS, key=f"opt_type_{c}") for c in to_convert}
-        decimal_comma = c2.checkbox("Números no formato brasileiro (1.234,56)", key="opt_decimal")
-        dayfirst = c2.checkbox("Datas com dia primeiro (dd/mm/aaaa)", key="opt_dayfirst")
-
-    schema = structured(df, {"drop_columns": drop_cols, "rename": rename, "snake_case": snake,
-                             "conversions": conversions, "decimal_comma": decimal_comma, "dayfirst": dayfirst})
-    cols = schema.columns.tolist()
-    num_cols, txt_cols = cl.numeric_columns(schema), cl.text_columns(schema)
-
-    with t_text:
-        text_cols = st.multiselect("Colunas de texto", txt_cols,
-                                   key=default(f"opt_text_cols_{hash(tuple(txt_cols))}", txt_cols))
-        c1, c2 = st.columns(2, gap="large")
-        text_options = {
-            "strip": c1.checkbox("Remover espaços nas pontas", key="opt_strip"),
-            "collapse_spaces": c1.checkbox("Remover espaços duplicados", key="opt_collapse"),
-            "accents": c1.checkbox("Remover acentos", key="opt_accents"),
-            "special": c1.checkbox("Remover caracteres especiais", key="opt_special"),
-            "empty_as_null": c1.checkbox("Tratar vazios, NA, null e - como nulos", key="opt_empty"),
-            "case": c2.radio("Maiúsculas e minúsculas", ["manter", "minúsculas", "MAIÚSCULAS", "Título"],
-                             key="opt_case"),
-        }
-
-    with t_dup:
-        c1, c2 = st.columns(2, gap="large")
-        drop_dup = c1.checkbox("Remover linhas duplicadas", key="opt_dup")
-        dup_subset, keep = None, "first"
-        if drop_dup:
-            dup_subset = c1.multiselect("Comparar apenas as colunas (vazio = todas)", cols, key="opt_dup_subset")
-            keep = {"primeira": "first", "última": "last", "nenhuma": False}[
-                c1.radio("Manter ocorrência", ["primeira", "última", "nenhuma"], horizontal=True, key="opt_keep")]
-        null_rows = c2.multiselect("Remover linhas com nulos nas colunas", cols, key="opt_null_rows")
-        threshold = None
-        if c2.checkbox("Excluir colunas com muitos nulos", key="opt_null_cols"):
-            threshold = c2.slider("% máximo de nulos por coluna", 0, 100, key="opt_threshold")
-
-    with t_imp:
-        c1, c2 = st.columns(2, gap="large")
-        impute_cols = c1.multiselect("Colunas para preencher nulos", cols, key="opt_impute_cols")
-        impute_method = c1.selectbox("Método", IMPUTE_METHODS, key="opt_impute_method")
-        fixed_value, skew_limit = None, 0.5
-        if impute_method == "valor fixo":
-            fixed_value = c1.text_input("Valor", key="opt_fixed")
-        elif impute_method == "automática (Pearson)":
-            skew_limit = c1.number_input("Limite de |assimetria| para usar a média", 0.0, 5.0, step=0.1,
-                                         key="opt_skew")
-            c2.caption("Assimetria de Pearson = 3 × (média − mediana) / desvio padrão. Abaixo do limite, "
-                       "usa a média; acima, a mediana. Colunas de texto usam a moda.")
-            numeric_sel = [c for c in impute_cols if c in num_cols]
-            if numeric_sel:
-                skews = [cl.pearson_skewness(schema[c]) for c in numeric_sel]
-                c2.dataframe(pd.DataFrame({
-                    "coluna": numeric_sel,
-                    "assimetria": [round(s, 2) for s in skews],
-                    "vai usar": ["média" if abs(s) < skew_limit else "mediana" for s in skews],
-                }), hide_index=True, width="stretch")
-        elif impute_method in ("forward fill", "backward fill"):
-            c2.caption("Preenche com o valor anterior (forward) ou seguinte (backward) na ordem das linhas.")
-
-    with t_out:
-        c1, c2 = st.columns(2, gap="large")
-        out_cols = c1.multiselect("Colunas numéricas", num_cols, key="opt_out_cols")
-        out_method = c1.radio("Método", ["IQR", "Z-score"], horizontal=True, key="opt_out_method")
-        out_factor = c1.number_input("Fator (IQR) ou nº de desvios (Z-score)", 0.5, 10.0, step=0.5,
-                                     key=default(f"opt_factor_{out_method}", 1.5 if out_method == "IQR" else 3.0))
-        out_action = c1.selectbox("Ação", ["remover linhas", "limitar (winsorizar)", "substituir por nulo"],
-                                  key="opt_out_action")
-        if out_cols:
-            preview_col = c2.selectbox("Visualizar", out_cols, key="opt_out_preview")
-            if out_method == "IQR":
-                chart, _ = ch.distribution(schema[preview_col], out_factor, include_outliers=True)
-                with c2:
-                    st.altair_chart(chart, width="stretch")
-            else:
-                c2.caption("A visualização com boxplot usa o método IQR.")
-
-    with t_filt:
-        n_filters = st.number_input("Quantidade de filtros", 0, 10, key="opt_n_filters")
-        filters = []
-        for i in range(int(n_filters)):
-            c1, c2, c3 = st.columns([2, 1, 2])
-            f_col = c1.selectbox("Coluna", cols, key=f"opt_fcol_{i}")
-            f_op = c2.selectbox("Operador", cl.OPERATORS, key=f"opt_fop_{i}")
-            f_val = "" if f_op in ("é nulo", "não é nulo") else c3.text_input("Valor", key=f"opt_fval_{i}")
-            filters.append({"column": f_col, "operator": f_op, "value": f_val})
-        if n_filters:
-            st.caption("Linhas que não atendem aos filtros são removidas.")
-
-    config = {
-        "drop_columns": drop_cols, "rename": rename, "snake_case": snake,
-        "conversions": conversions, "decimal_comma": decimal_comma, "dayfirst": dayfirst,
-        "text_columns": text_cols, "text_options": text_options,
-        "dup_null": {"drop_duplicates": drop_dup, "dup_subset": dup_subset, "keep": keep,
-                     "drop_null_rows_in": null_rows, "drop_cols_threshold": threshold},
-        "impute_columns": impute_cols, "impute_method": impute_method,
-        "fixed_value": fixed_value, "skew_limit": skew_limit,
-        "outlier_columns": out_cols, "outlier_method": out_method,
-        "outlier_factor": out_factor, "outlier_action": out_action,
-        "filters": filters,
-    }
-
-    st.write("")
-    left, _, right = st.columns([1, 3, 1])
-    if left.button("Voltar", icon=":material/arrow_back:", width="stretch"):
+        reset_all()
+        state.file_id = f"{uploaded.name}-{uploaded.size}"
+        state.file_name, state.file_data = uploaded.name, uploaded.getvalue()
+        del state["uploader"]
         go(2)
-    if right.button("Aplicar limpeza", type="primary", width="stretch"):
-        try:
-            state.cleaned, state.log = cl.run_pipeline(df, config)
-            state.config = config
-        except Exception as e:
-            st.error(f"Erro ao aplicar a limpeza: {e}")
-        else:
-            go(4)
 
 
 # --------------------------------------------------------------------------- #
-# Etapa 4 — Resultado
+# Etapa 2 — Tratar
 # --------------------------------------------------------------------------- #
-def step_result(df: pd.DataFrame):
-    cleaned, config = state.get("cleaned"), state.get("config", {})
-    if cleaned is None:
-        st.caption("Nenhuma limpeza aplicada ainda.")
-        nav(back=3)
+def ring(pct: float, color: str, caption: str) -> str:
+    return (f'<div class="dc-ring"><div class="dial" style="background:conic-gradient(var(--{color}) '
+            f'{pct:.1f}%, #1a2030 0)"><span class="c-{color}">{pct:.0f}%</span></div>'
+            f'<div class="cap">{caption}</div></div>')
+
+
+def file_card(res):
+    with st.container(key="card_file"):
+        left, right = st.columns([3, 2], vertical_alignment="center")
+        ext = state.file_name.rsplit(".", 1)[-1].upper()
+        detail = ext
+        if state.get("used_sep"):
+            detail += f' · delim "{esc(state.used_sep).replace(chr(9), "tab")}"'
+        detail += f" · {fmt_bytes(len(state.file_data))}"
+        left.html(f'<div class="dc-file"><span class="ico">&#128462;</span><div><div class="name">'
+                  f'{esc(state.file_name)}</div><div class="dc-small">{detail}</div></div></div>')
+        with right:
+            d, opt = st.columns([3, 1], vertical_alignment="center")
+            d.html(f'<div class="dc-dims"><div><b>{fmt_int(len(res["raw"]))}</b><span class="dc-small">Linhas'
+                   f'</span></div><div><b>{res["raw"].shape[1]}</b><span class="dc-small">Colunas</span></div></div>')
+            with opt.popover("", icon=":material/tune:", help="Opções de leitura"):
+                ext = ext.lower()
+                if ext in ("csv", "tsv", "txt"):
+                    st.selectbox("Separador", list(SEPARATORS), key="opt_sep")
+                elif ext in ("xlsx", "xls"):
+                    st.selectbox("Planilha", sheets(state.file_data), key="opt_sheet")
+                else:
+                    st.caption("Sem opções de leitura para este formato.")
+
+
+def kpis(res):
+    prep, out, profs = res["prep"], res["out"], res["profiles"]
+    before, after = cl.quality(prep), cl.quality(out)
+    diff = after - before
+    outliers = sum(p.get("outliers", 0) for p in profs.values())
+    problems = sum(1 for p in profs.values() if p["nulls"] or p.get("outliers", 0))
+    items = [(res["dups"], "Duplicatas removidas", "muted" if not res["dups"] else "cyan"),
+             (res["counts"]["imputed"], "Células imputadas", "amber"),
+             (outliers, "Outliers detectados", "orange"),
+             (problems, "Colunas com problemas", "accent")]
+    blocks = "".join(f'<div class="dc-kpi"><b class="c-{"muted" if not v else c}">{fmt_int(v)}</b>'
+                     f"<span>{label}</span></div>" for v, label, c in items)
+    with st.container(key="card_kpis"):
+        st.html(f'<div class="dc-kpis"><div class="dc-rings">{ring(before, pct_color(before), "Antes")}'
+                f'<div class="dc-arrow c-accent">&#8594;<br><span class="c-green">{diff:+.0f}pp</span></div>'
+                f'{ring(after, pct_color(after), "Depois")}</div>{blocks}</div>')
+
+
+def value_options(prep: pd.DataFrame, col) -> list[str]:
+    """Valores existentes (mais frequentes primeiro) para escolher na substituição manual."""
+    cols = [col] if col in prep.columns else prep.columns.tolist()
+    counts = pd.concat([prep[c].dropna().astype(str) for c in cols]).value_counts() if cols else pd.Series()
+    return counts.index[:300].tolist()
+
+
+def rules_panel(res):
+    prep = res["prep"]
+    columns = prep.columns.tolist()
+    n = len(state.rules)
+    title = "Substituições manuais de valores" + (f"  ·  {n} regra(s)" if n else "")
+    with st.expander(title, icon=":material/find_replace:", expanded=bool(n)):
+        st.caption("Escolha a coluna e o valor que quer trocar, antes do tratamento estatístico. "
+                   "Deixe *Substituir por* vazio para transformar em nulo.")
+        nonce = state.setdefault("rule_nonce", 0)
+        c = st.columns([1.4, 1.9, 1.9, 1.9, 0.6, 1.5], vertical_alignment="bottom")
+        labels = {"Todas as colunas": None} | {str(x): x for x in columns}
+        col_label = c[0].selectbox("Coluna", list(labels), key="rule_col")
+        col = labels[col_label]
+        find = c[1].selectbox("Localizar", value_options(prep, col), index=None, accept_new_options=True,
+                              placeholder="Valor a localizar…", key=f"rule_find_{nonce}")
+        repl = c[2].text_input("Substituir por", placeholder="Novo valor (vazio = nulo)…",
+                             key=f"rule_repl_{nonce}")
+        mode = c[3].segmented_control("Tipo", ["Exato", "Contém", "Regex"], default="Exato", key="rule_mode")
+        case = c[4].checkbox("Aa", help="Diferenciar maiúsculas e minúsculas", key="rule_case")
+        if c[5].button("Adicionar regra", icon=":material/add:", width="stretch", disabled=not find):
+            state.rules = state.rules + [{"column": col, "find": str(find), "replace": repl,
+                                          "mode": (mode or "Exato").lower(), "case": case}]
+            state.rule_nonce += 1
+            st.rerun()
+        for i, r in enumerate(state.rules):
+            a, b = st.columns([12, 1], vertical_alignment="center")
+            target = esc(r["column"] if r["column"] is not None else "todas")
+            a.html(f'<div class="dc-small"><span class="c-accent">{target}</span> · "{esc(r["find"])}" → '
+                   f'"{esc(r["replace"]) or "nulo"}" · {r["mode"]}{" · Aa" if r["case"] else ""}</div>')
+            if b.button("", icon=":material/close:", key=f"del_rule_{i}", help="Remover regra"):
+                state.rules = state.rules[:i] + state.rules[i + 1:]
+                st.rerun()
+
+
+def show_chart(chart, table: pd.DataFrame, empty_msg: str = "Nada a mostrar."):
+    if chart is None:
+        st.caption(empty_msg)
         return
+    spec_height = chart.to_dict().get("height")
+    height = spec_height + 70 if isinstance(spec_height, int) else "content"
+    st.altair_chart(chart, width="stretch", height=height, theme=None)
+    with st.expander("Ver dados do gráfico"):
+        st.dataframe(table, hide_index=True, width="stretch")
 
-    o, c = metrics(df), metrics(cleaned)
-    m = st.columns(4)
-    m[0].metric("Linhas", fmt_int(c[0]), fmt_delta(c[0] - o[0]), delta_color="off")
-    m[1].metric("Colunas", c[1], fmt_delta(c[1] - o[1]), delta_color="off")
-    m[2].metric("Células nulas", fmt_int(c[2]), fmt_delta(c[2] - o[2]), delta_color="inverse")
-    m[3].metric("Linhas duplicadas", fmt_int(c[3]), fmt_delta(c[3] - o[3]), delta_color="inverse")
 
-    # "Antes" = original com colunas e tipos ajustados, para comparar pelos mesmos nomes
-    baseline = structured(df, config)
+def charts_panel(res):
+    df = res["prep"]
+    num_cols, cat_cols = cl.numeric_columns(df), cl.text_columns(df)
+    with st.container(key="card_charts"):
+        st.html('<div class="dc-title">Gráficos</div>')
+        t_nulls, t_dist, t_cat, t_corr = st.tabs(["Nulos", "Distribuição", "Categorias", "Correlação"])
+        with t_nulls:
+            show_chart(*ch.nulls_bar(df), empty_msg="Nenhuma coluna tem valores nulos.")
+        with t_dist:
+            if not num_cols:
+                st.caption("Nenhuma coluna numérica.")
+            else:
+                a, b = st.columns([2, 1], vertical_alignment="bottom")
+                col = a.selectbox("Coluna", num_cols, key="opt_chart_num")
+                with_out = b.toggle("Incluir outliers no eixo", key="opt_chart_out")
+                sk = cl.pearson_skewness(df[col])
+                st.caption(f"Assimetria de Pearson {sk:+.2f} ({cl.interpret_skewness(sk)})")
+                show_chart(*ch.distribution(df[col], state.get("opt_iqr", 1.5), include_outliers=with_out))
+        with t_cat:
+            if not cat_cols:
+                st.caption("Nenhuma coluna de texto.")
+            else:
+                col = st.selectbox("Coluna", cat_cols, key="opt_chart_cat")
+                st.caption(f"{fmt_int(df[col].nunique())} valores distintos")
+                show_chart(*ch.top_values(df[col]))
+        with t_corr:
+            show_chart(*ch.correlation(df), empty_msg="São necessárias ao menos duas colunas numéricas.")
 
-    t_nulls, t_dist, t_data, t_log = st.tabs(["Nulos", "Distribuição", "Dados", "Registro"])
-    with t_nulls:
-        st.markdown("**Nulos por coluna, antes e depois**")
-        show_chart(*ch.nulls_compare(baseline, cleaned), empty_msg="Não havia nulos no arquivo.")
-    with t_dist:
-        shared = [col for col in cl.numeric_columns(cleaned) if col in baseline.columns]
-        if not shared:
-            st.caption("Nenhuma coluna numérica para comparar.")
-        else:
-            col = st.selectbox("Coluna", shared, key="res_dist_col")
-            st.markdown(f"**Distribuição de {col}, antes e depois**")
-            show_chart(*ch.distribution_compare(baseline[col], cleaned[col]))
-            st.caption("Antes = dados originais com as conversões de tipo aplicadas.")
-    with t_data:
-        view = st.segmented_control("Visualizar", ["Depois", "Antes"], default="Depois", key="res_view",
-                                    label_visibility="collapsed")
-        show_table(df if view == "Antes" else cleaned)
-    with t_log:
-        log = state.get("log") or ["Nenhuma alteração aplicada."]
-        st.markdown("\n".join(f"- {line}" for line in log))
+
+def compare_panel(res):
+    before, after = res["prep"], res["out"]
+    with st.container(key="card_compare"):
+        st.html('<div class="dc-title">Antes e depois</div>')
+        t_nulls, t_dist = st.tabs(["Nulos", "Distribuição"])
+        with t_nulls:
+            show_chart(*ch.nulls_compare(before, after), empty_msg="Não havia nulos no arquivo.")
+        with t_dist:
+            shared = [c for c in cl.numeric_columns(after) if c in before.columns]
+            if not shared:
+                st.caption("Nenhuma coluna numérica para comparar.")
+            else:
+                col = st.selectbox("Coluna", shared, key="opt_cmp_col")
+                show_chart(*ch.distribution_compare(before[col], after[col]))
+
+
+def completeness(res):
+    rows = []
+    for col, p in res["profiles"].items():
+        pct = 100 - p["nulls"] / max(p["total"], 1) * 100
+        tag, color = KIND_STYLE[p["kind"]]
+        pc = pct_color(pct)
+        name = esc(col) if str(col).strip() and not str(col).startswith("Unnamed") else '<span class="c-muted">—</span>'
+        rows.append(f'<div class="dc-comp-row"><span class="dc-badge c-{color} bg-{color}">{tag}</span>'
+                    f'<span class="dc-trunc">{name}</span><div class="dc-bar"><i style="width:{pct:.1f}%;'
+                    f'background:var(--{pc})"></i></div><span class="pct c-{pc}">{pct:.0f}%</span></div>')
+    with st.container(key="card_comp"):
+        st.html(f'<div class="dc-title">Completude por coluna</div><div class="dc-comp">{"".join(rows)}</div>')
+
+
+def histogram_html(series: pd.Series, prof: dict, factor: float, bins: int = 14) -> str:
+    s = series.dropna().astype(float)
+    if s.empty:
+        return ""
+    counts, edges = pd.cut(s, bins=bins, retbins=True, include_lowest=True)
+    freq = counts.value_counts(sort=False).to_numpy()
+    low, high = cl.outlier_bounds(s, "IQR", factor)
+    peak = max(freq.max(), 1)
+    bars = []
+    for i, f in enumerate(freq):
+        mid = (edges[i] + edges[i + 1]) / 2
+        cls = ' class="out"' if (mid < low or mid > high) and f else ""
+        bars.append(f'<i{cls} style="height:{f / peak * 100:.0f}%"></i>')
+    return (f'<div class="dc-range"><span>{fmt_num(prof["min"])}</span><span class="c-cyan">'
+            f'{cl.skew_label(prof["skew"])}</span><span>{fmt_num(prof["max"])}</span></div>'
+            f'<div class="dc-hist">{"".join(bars)}</div>')
+
+
+def column_card(col, prof: dict, series: pd.Series, res, idx: int):
+    k = col_key(col)
+    tag, color = KIND_STYLE[prof["kind"]]
+    total, nulls = prof["total"], prof["nulls"]
+    pct = nulls / max(total, 1) * 100
+    nc = "green" if not nulls else "amber" if pct < 30 else "red"
+    display = esc(col) if str(col).strip() and not str(col).startswith("Unnamed") else "(sem nome)"
+    factor = state.get("opt_iqr", 1.5)
+
+    with st.container(key=f"colcard_{k}"):
+        head, menu = st.columns([6, 1], vertical_alignment="center")
+        head.html(f'<div class="dc-colhead"><span class="name dc-trunc">{display}</span>'
+                  f'<span class="dc-badge c-{color} bg-{color}">{prof["kind"].upper()}</span></div>')
+        with menu.popover("", icon=":material/more_vert:", help="Tipo e exclusão"):
+            current = res["types"][col]
+            choice = st.selectbox("Tipo da coluna", cl.TYPES, index=cl.TYPES.index(current), key=f"opt_type_{k}")
+            if choice != current or col in state.get("type_overrides", {}):
+                state.setdefault("type_overrides", {})[col] = choice
+            if st.button("Excluir coluna", icon=":material/delete:", key=f"drop_{k}", width="stretch"):
+                state.opt_drop = state.get("opt_drop", []) + [col]
+                st.rerun()
+
+        body = [f'<div class="dc-row"><span class="c-muted">Nulos</span><span class="v c-{nc}">'
+                f"{fmt_int(nulls)}/{fmt_int(total)} · {pct:.0f}%</span></div>"
+                f'<div class="dc-bar" style="margin-top:.4rem"><i style="width:{max(pct, 0.5 if nulls else 0):.1f}%;'
+                f'background:var(--{nc})"></i></div>']
+        body.append(f'<div class="dc-note">{"· " + prof["pattern"] if prof["pattern"] else "&nbsp;"}</div>')
+
+        kind = prof["kind"]
+        if kind == "numérico" and "mean" in prof:
+            body.append(histogram_html(series, prof, factor))
+            body.append(f'<div class="dc-stats"><div><span>μ</span><b>{fmt_num(prof["mean"])}</b></div>'
+                        f'<div><span>MED</span><b>{fmt_num(prof["median"])}</b></div>'
+                        f'<div><span>σ</span><b>{fmt_num(prof["std"])}</b></div></div>')
+            out = prof["outliers"]
+            out_html = f'<span class="c-orange">{out} outlier{"s" if out != 1 else ""} (IQR)</span>' if out else ""
+            body.append(f'<div class="dc-meta"><span>{fmt_int(prof["unique"])} únicos</span>'
+                        f'<span>curt={prof["kurt"]:.1f}</span>{out_html}</div>')
+        elif kind == "data" and "min" in prof:
+            body.append(f'<div class="dc-stats" style="grid-template-columns:1fr 1fr"><div><span>INÍCIO</span>'
+                        f'<b>{prof["min"]:%d/%m/%Y}</b></div><div><span>FIM</span><b>{prof["max"]:%d/%m/%Y}</b>'
+                        f'</div></div><div class="dc-meta"><span>{fmt_int(prof["unique"])} únicos</span></div>')
+        elif "top" in prof:
+            rows = "".join(f'<span class="dc-trunc">{esc(v)}</span><div class="dc-bar"><i style="width:{p}%;'
+                           f'background:var(--{color});opacity:.7"></i></div><span class="pct">{p}%</span>'
+                           for v, p in prof["top"])
+            body.append(f'<div class="dc-cats">{rows}</div><div class="dc-meta"><span>{fmt_int(prof["unique"])} '
+                        f'únicos</span><span>H={prof["entropy"]:.2f} bit</span></div>')
+        st.html("".join(body))
+
+        has_out = kind == "numérico" and prof.get("outliers", 0)
+        if not nulls and not has_out:
+            st.html('<div class="dc-sep"></div><div class="dc-ok">&#10003; Coluna completa</div>')
+            return
+
+        if nulls:
+            rec, why = cl.recommend(series, kind, state.get("opt_skew", 0.5))
+            options = cl.IMPUTE_OPTIONS[kind]
+            key = f"opt_imp_{k}"
+            if state.get(key) not in options:
+                state[key] = rec
+            treated = int(res["imputed"][col].sum()) if col in res["imputed"] else 0
+            badge = (f'<span class="dc-pill c-amber bg-amber">{treated} tratado{"s" if treated != 1 else ""}</span>'
+                     if treated else '<span class="dc-pill c-muted" style="border-color:var(--border)">nulos '
+                                     'mantidos</span>')
+            st.html(f'<div class="dc-sep"></div><div class="dc-row"><span class="dc-label">Estratégia</span>'
+                    f"{badge}</div>")
+            method = st.segmented_control("Estratégia", options, format_func=IMPUTE_LABELS.get, key=key,
+                                          label_visibility="collapsed") or rec
+            value = cl.fill_value(series, method)
+            shown = cl.format_value(value) if value is not None else IMPUTE_HELP[method].split(":")[0]
+            explain = why if method == rec else IMPUTE_HELP[method]
+            st.html(f'<div class="dc-value">Valor: <b class="c-{color}">{esc(shown)}</b></div>'
+                    f'<div class="dc-why">{esc(explain)}</div>')
+
+        if has_out:
+            st.html('<div class="dc-sep"></div><div class="dc-row"><span class="dc-label">Outliers (IQR)</span>'
+                    f'<span class="dc-pill c-orange bg-orange">{prof["outliers"]} detectado'
+                    f'{"s" if prof["outliers"] != 1 else ""}</span></div>')
+            key = f"opt_out_{k}"
+            state.setdefault(key, "manter")
+            st.segmented_control("Outliers", cl.OUTLIER_ACTIONS, format_func=OUTLIER_LABELS.get, key=key,
+                                 label_visibility="collapsed")
+            with st.popover("Ver distribuição", icon=":material/bar_chart:", width="stretch"):
+                chart, _ = ch.distribution(series, factor, include_outliers=True)
+                if chart is not None:
+                    st.altair_chart(chart, width="stretch")
+
+
+def columns_section(res):
+    profs = res["profiles"]
+    problems = [c for c, p in profs.items() if p["nulls"] or p.get("outliers", 0)]
+    head, search, flt, sort = st.columns([1.2, 1.6, 4.2, 1.8], vertical_alignment="center")
+    q = search.text_input("Buscar", placeholder="Buscar…", key="opt_search", label_visibility="collapsed",
+                          icon=":material/search:")
+    options = ["Todas", f"Problemas ({len(problems)})"] + [k for k, v in KIND_FILTERS.items()
+                                                            if any(p["kind"] == v for p in profs.values())]
+    if state.get("opt_filter") and state.opt_filter.startswith("Problemas"):
+        state.opt_filter = options[1]
+    if state.get("opt_filter") not in options:
+        state.opt_filter = options[1] if problems else "Todas"
+    choice = flt.pills("Filtro", options, key="opt_filter", label_visibility="collapsed") or "Todas"
+    order = sort.pills("Ordenar", ["Nulos↓", "A-Z", "Tipo"], key="opt_sort",
+                       label_visibility="collapsed") or "Nulos↓"
+
+    cols = list(profs)
+    if choice.startswith("Problemas"):
+        cols = [c for c in cols if c in problems]
+    elif choice in KIND_FILTERS:
+        cols = [c for c in cols if profs[c]["kind"] == KIND_FILTERS[choice]]
+    if q:
+        cols = [c for c in cols if q.lower() in str(c).lower()]
+    if order == "Nulos↓":
+        cols.sort(key=lambda c: (-profs[c]["nulls"], -profs[c].get("outliers", 0)))
+    elif order == "A-Z":
+        cols.sort(key=lambda c: str(c).lower())
+    else:
+        cols.sort(key=lambda c: (cl.TYPES.index(profs[c]["kind"]), str(c).lower()))
+    head.html(f'<div style="font-weight:700;font-size:1.05rem">Colunas <span class="dc-small">'
+              f"{len(cols)}/{len(profs)}</span></div>")
+
+    if not cols:
+        st.caption("Nenhuma coluna corresponde ao filtro.")
+        return
+    for start in range(0, len(cols), 3):
+        grid = st.columns(3)
+        for slot, col in zip(grid, cols[start:start + 3]):
+            with slot:
+                column_card(col, profs[col], res["prep"][col], res, start)
+
+
+def advanced_panel(res):
+    with st.expander("Mais opções de limpeza", icon=":material/tune:"):
+        t_text, t_cols, t_rows = st.tabs(["Texto", "Colunas", "Linhas e filtros"])
+        with t_text:
+            a, b = st.columns(2, gap="large")
+            a.toggle("Tratar vazios, NA, null e - como nulos", key="opt_null_tokens")
+            a.toggle("Remover acentos", key="opt_accents")
+            a.toggle("Remover caracteres especiais", key="opt_special")
+            b.radio("Maiúsculas e minúsculas", ["manter", "minúsculas", "MAIÚSCULAS", "Título"], key="opt_case",
+                    horizontal=True)
+            st.caption("Espaços nas pontas e espaços duplicados são sempre removidos.")
+        with t_cols:
+            all_cols = res["raw"].columns.tolist()
+            a, b = st.columns(2, gap="large")
+            a.multiselect("Excluir colunas", all_cols, key="opt_drop")
+            remaining = [c for c in all_cols if c not in state.get("opt_drop", [])]
+            to_rename = b.multiselect("Renomear colunas", remaining, key="opt_rename_cols")
+            for c in to_rename:
+                state.setdefault(f"opt_rename_{col_key(c)}", str(c))
+                b.text_input(f"Novo nome para {c}", key=f"opt_rename_{col_key(c)}")
+        with t_rows:
+            a, b = st.columns(2, gap="large")
+            a.toggle("Remover linhas duplicadas", key="opt_dedup")
+            a.multiselect("Remover linhas com nulos nas colunas", res["prep"].columns.tolist(), key="opt_null_rows")
+            b.number_input("Fator IQR para outliers", 0.5, 10.0, step=0.5, key="opt_iqr")
+            b.number_input("Limite de |assimetria| para usar a média", 0.0, 5.0, step=0.1, key="opt_skew",
+                           help="Assimetria de Pearson = 3 × (média − mediana) / desvio padrão. Abaixo do limite, "
+                                "a sugestão é a média; acima, a mediana.")
+            st.write("**Filtros**")
+            n = st.number_input("Quantidade de filtros", 0, 10, key="opt_n_filters")
+            cols = res["prep"].columns.tolist()
+            for i in range(int(n)):
+                c1, c2, c3 = st.columns([2, 1, 2])
+                c1.selectbox("Coluna", cols, key=f"opt_fcol_{i}")
+                op = c2.selectbox("Operador", cl.OPERATORS, key=f"opt_fop_{i}")
+                if op not in ("é nulo", "não é nulo"):
+                    c3.text_input("Valor", key=f"opt_fval_{i}")
+            if n:
+                st.caption("Linhas que não atendem aos filtros são removidas.")
+
+
+def step_treat(res):
+    file_card(res)
+    kpis(res)
+    rules_panel(res)
+    completeness(res)
+    charts_panel(res)
+    advanced_panel(res)
+    st.write("")
+    columns_section(res)
+    st.write("")
+    _, right = st.columns([3, 1])
+    if right.button("Continuar para exportação", type="primary", icon=":material/arrow_forward:",
+                    icon_position="right", width="stretch"):
+        go(3)
+
+
+# --------------------------------------------------------------------------- #
+# Etapa 3 — Exportar
+# --------------------------------------------------------------------------- #
+def stat_card(key, dot, title, value, color, sub, extra=""):
+    with st.container(key=f"card_{key}"):
+        st.html(f'<div class="dc-stat-title"><span class="dc-dot" style="background:var(--{dot})"></span>'
+                f'{title}</div><div class="dc-stat-big c-{color}">{value}<span style="font-size:.95rem;'
+                f'font-weight:500;margin-left:.6rem" class="c-green">{extra}</span></div>'
+                f'<div class="dc-small">{sub}</div>')
+
+
+def highlight(df: pd.DataFrame, mask: pd.DataFrame):
+    style = "background-color: rgba(245,158,11,.12); color: #f59e0b"
+    styles = pd.DataFrame("", index=df.index, columns=df.columns)
+    styles[mask.reindex(index=df.index, columns=df.columns, fill_value=False).astype(bool)] = style
+    return df.style.apply(lambda _: styles, axis=None).format(precision=2, na_rep="")
+
+
+def step_export(res):
+    out, prep = res["out"], res["prep"]
+    before, after = cl.quality(prep), cl.quality(out)
+    s1, s2, s3 = st.columns(3)
+    with s1:
+        stat_card("q", "green", "Qualidade", f"{after:.0f}%", pct_color(after),
+                  f"{fmt_int(len(out))} linhas · {out.shape[1]} colunas", f"{after - before:+.0f}pp")
+    with s2:
+        stat_card("i", "amber", "Imputações", fmt_int(res["counts"]["imputed"]), "amber",
+                  "células preenchidas por estatística")
+    with s3:
+        stat_card("d", "red", "Deduplicação", fmt_int(res["dups"]), "red" if res["dups"] else "muted",
+                  "duplicatas removidas")
 
     st.write("")
-    st.subheader("Baixar")
+    entries = [e for e in res["log"] if "0 célula(s)" not in e["text"]]
+    colors = {c: KIND_STYLE[t][1] for c, t in res["types"].items()}
+    rows = []
+    for e in entries:
+        col = e.get("column")
+        color = colors.get(col, "slate")
+        name = esc(col) if col is not None else "Geral"
+        rows.append(f'<div><span class="dc-dot" style="background:var(--amber)"></span>'
+                    f'<span class="col c-{color} dc-trunc">{name}</span><span>{esc(e["text"])}</span>'
+                    f'<span class="val">{esc(e.get("value", ""))}</span></div>')
+    body = "".join(rows) or '<div class="dc-small">Nenhuma alteração aplicada.</div>'
+    with st.container(key="card_log"):
+        st.html(f'<div class="dc-title">Log de alterações</div><div class="dc-log">{body}</div>')
+
+    st.write("")
+    compare_panel(res)
+    st.write("")
+    with st.container(key="card_table"):
+        t_out, t_raw = st.tabs([f"Dados Tratados ({fmt_int(len(out))})", f"Dados Originais ({fmt_int(len(res['raw']))})"])
+        with t_out:
+            n_imp = int(res["imputed"].to_numpy().sum())
+            if n_imp:
+                st.html('<div class="dc-small" style="text-align:right"><span class="c-amber">&#9679; imputado'
+                        "</span></div>")
+            view = out.head(PREVIEW_ROWS)
+            if len(out) > PREVIEW_ROWS:
+                st.caption(f"Primeiras {fmt_int(PREVIEW_ROWS)} de {fmt_int(len(out))} linhas")
+            try:
+                styled = highlight(view, res["imputed"].head(PREVIEW_ROWS)) if n_imp else \
+                    view.style.format(precision=2, na_rep="")
+                st.dataframe(styled, width="stretch")
+            except Exception:
+                st.dataframe(view.astype(str), width="stretch")
+        with t_raw:
+            st.dataframe(res["raw"].head(PREVIEW_ROWS).astype(str), width="stretch")
+
+    st.write("")
+    back, _, sep, d1, d2, d3 = st.columns([1.4, 1.2, 1, 1.1, 1.1, 1.1], vertical_alignment="bottom")
+    if back.button("Voltar e ajustar", icon=":material/arrow_back:", type="tertiary"):
+        go(2)
+    sep.segmented_control("Separador do CSV", [",", ";"], key="opt_csv_sep")
     base = state.file_name.rsplit(".", 1)[0] + "_limpo"
-    d1, d2, d3 = st.columns([1, 1, 2])
-    csv_sep = d3.radio("Separador do CSV", [",", ";"], horizontal=True, key="res_csv_sep")
-    d1.download_button("CSV", cl.to_csv_bytes(cleaned, csv_sep), f"{base}.csv", "text/csv",
-                       icon=":material/download:", width="stretch")
+    d1.download_button("Baixar CSV", cl.to_csv_bytes(out, state.get("opt_csv_sep") or ","), f"{base}.csv",
+                       "text/csv", icon=":material/download:", width="stretch")
     try:
-        d2.download_button("Excel", cl.to_excel_bytes(cleaned), f"{base}.xlsx",
+        d2.download_button("Baixar Excel", cl.to_excel_bytes(out), f"{base}.xlsx",
                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                            icon=":material/download:", width="stretch")
     except Exception as e:
         d2.caption(f"Excel indisponível: {e}")
-
-    st.write("")
-    left, _, right = st.columns([1, 3, 1])
-    if left.button("Ajustar limpeza", icon=":material/arrow_back:", width="stretch"):
-        go(3)
-    if right.button("Novo arquivo", width="stretch"):
-        reset_options()
-        for key in ("file_id", "file_name", "file_data", "sep_value", "used_sep"):
-            state.pop(key, None)
-        go(1)
+    d3.download_button("Baixar JSON", cl.to_json_bytes(out), f"{base}.json", "application/json",
+                       icon=":material/download:", type="primary", width="stretch")
 
 
 # --------------------------------------------------------------------------- #
 # Página
 # --------------------------------------------------------------------------- #
-st.title("Limpador de Dados")
-data = current_data() if state.step > 1 else None
-if state.step > 1 and data is None:
+result = pipeline() if state.step > 1 else None
+if state.step > 1 and result is None and "file_data" not in state:
     state.step = 1
-stepper(state.step)
+header(result)
 
 if state.step == 1:
     step_upload()
-elif state.step == 2:
-    step_diagnosis(data)
-elif state.step == 3:
-    step_cleaning(data)
-else:
-    step_result(data)
+elif result is not None and state.step == 2:
+    step_treat(result)
+elif result is not None:
+    step_export(result)
