@@ -10,7 +10,7 @@ import cleaner as cl
 # Tons validados por contraste (marca ≥ 3:1 contra o fundo) em cada modo
 PALETTES = {
     "light": {"ink": "#1a1a1a", "muted": "#949494", "text": "#525252", "surface": "#ffffff", "wash": "#f0f0f0"},
-    "dark": {"ink": "#818cf8", "muted": "#4b5368", "text": "#8b93a7", "surface": "#07090f", "wash": "#1a2030"},
+    "dark": {"ink": "#2dd4bf", "muted": "#3b5456", "text": "#8fa6a8", "surface": "#071112", "wash": "#15292c"},
 }
 BAR = 18  # espessura das barras (≤ 24px)
 # Números no padrão brasileiro nos eixos e tooltips

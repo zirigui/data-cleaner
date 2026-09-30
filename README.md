@@ -1,4 +1,4 @@
-# DataClean — Limpador de Dados
+# Limpador de Dados
 
 Aplicativo Streamlit para limpar arquivos CSV, TSV, TXT, Excel, JSON e Parquet em três etapas:
 
