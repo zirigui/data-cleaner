@@ -139,7 +139,7 @@ st.html(
     .c-cyan { color: var(--cyan); } .c-violet { color: var(--violet); } .c-green { color: var(--green); }
     .c-amber { color: var(--amber); } .c-orange { color: var(--orange); } .c-red { color: var(--red); }
     .c-blue { color: var(--blue); } .c-pink { color: var(--pink); } .c-slate { color: var(--slate); }
-    .c-muted { color: var(--muted); } .c-accent { color: var(--accent); }
+    .c-muted { color: var(--muted); } .c-accent { color: var(--accent); } .c-text { color: var(--text); }
     .bg-cyan { background: rgba(45,212,191,.07); border-color: rgba(45,212,191,.28) !important; }
     .bg-violet { background: rgba(196,161,255,.07); border-color: rgba(196,161,255,.28) !important; }
     .bg-green { background: rgba(163,230,53,.07); border-color: rgba(163,230,53,.28) !important; }
@@ -251,7 +251,7 @@ state = st.session_state
 state.setdefault("step", 1)
 state.setdefault("rules", [])
 for _key, _value in {"opt_null_tokens": True, "opt_dedup": True, "opt_iqr": 1.5, "opt_skew": 0.5,
-                     "opt_sort": "Nulos↓", "opt_csv_sep": ",", "opt_n_filters": 0}.items():
+                     "opt_sort": "Nulos↓", "opt_csv_sep": ",", "opt_tbl_order": "Alterados primeiro", "opt_n_filters": 0}.items():
     state.setdefault(_key, _value)
 
 
@@ -332,6 +332,11 @@ def run_treat(file_id: str, _prep: pd.DataFrame, cfg_json: str, types_json: str)
 
 
 @st.cache_data(show_spinner=False)
+def run_changed(key: str, _raw: pd.DataFrame, _out: pd.DataFrame, origin: tuple, rename_json: str, types_json: str):
+    return cl.changed_cells(_raw, _out, list(origin), json.loads(rename_json), json.loads(types_json))
+
+
+@st.cache_data(show_spinner=False)
 def profiles(file_id: str, _prep: pd.DataFrame, cfg_json: str, types_json: str):
     types, factor = json.loads(types_json), json.loads(cfg_json).get("iqr_factor", 1.5)
     return {c: cl.column_profile(_prep[c], types[c], factor) for c in _prep.columns}
@@ -389,7 +394,14 @@ def pipeline():
         return None
     profs = profiles(fid + cfg_json, prep, tcfg_json, types_json)
     return {"raw": raw, "prep": prep, "types": types, "out": out, "imputed": imputed, "counts": counts,
-            "log": plog + tlog, "profiles": profs, "dups": len(raw) - len(prep)}
+            "log": plog + tlog, "profiles": profs, "dups": len(raw) - len(prep),
+            "key": fid + cfg_json + tcfg_json, "rename": cfg["rename"]}
+
+
+def changed_mask(res) -> pd.DataFrame:
+    """Células alteradas em relação ao arquivo original (calculado só na exportação)."""
+    return run_changed(res["key"], res["raw"], res["out"], tuple(res["counts"]["origin"]),
+                       json.dumps(res["rename"], default=str), json.dumps(res["types"], sort_keys=True))
 
 
 # --------------------------------------------------------------------------- #
@@ -835,11 +847,53 @@ def stat_card(key, dot, title, value, color, sub, extra=""):
                 f'<div class="dc-small">{sub}</div>')
 
 
-def highlight(df: pd.DataFrame, mask: pd.DataFrame):
-    style = "background-color: rgba(250,204,21,.12); color: #facc15"
+def highlight(df: pd.DataFrame, imputed: pd.DataFrame, changed: pd.DataFrame):
+    """Amarelo para células imputadas, verde-azulado para as demais alterações."""
     styles = pd.DataFrame("", index=df.index, columns=df.columns)
-    styles[mask.reindex(index=df.index, columns=df.columns, fill_value=False).astype(bool)] = style
-    return df.style.apply(lambda _: styles, axis=None).format(precision=2, na_rep="")
+    styles[changed.to_numpy(dtype=bool)] = "background-color: rgba(45,212,191,.12); color: #2dd4bf"
+    styles[imputed.to_numpy(dtype=bool)] = "background-color: rgba(250,204,21,.12); color: #facc15"
+    styler = df.style.apply(lambda _: styles, axis=None).format(precision=2, na_rep="")
+    dates = [c for c in df.columns if pd.api.types.is_datetime64_any_dtype(df[c])]
+    if dates:
+        styler = styler.format(lambda v: "" if pd.isna(v) else f"{v:%d/%m/%Y}", subset=dates)
+    return styler
+
+
+def data_table(res):
+    """Tabela tratada com as linhas alteradas primeiro (ou só elas), destacando as células mudadas."""
+    out = res["out"]
+    imputed = res["imputed"].reindex(columns=out.columns, fill_value=False).astype(bool)
+    changed = changed_mask(res) | imputed
+    row_changed = changed.any(axis=1).to_numpy()
+    n_rows = int(row_changed.sum())
+
+    a, b, c = st.columns([2.2, 1.6, 3], vertical_alignment="center")
+    order = a.segmented_control("Ordem", ["Alterados primeiro", "Ordem original"], key="opt_tbl_order",
+                                label_visibility="collapsed") or "Alterados primeiro"
+    only = b.toggle("Só linhas alteradas", key="opt_tbl_only")
+    c.html(f'<div class="dc-small" style="text-align:right"><b class="c-text">{fmt_int(n_rows)}</b> de '
+           f'{fmt_int(len(out))} linhas alteradas &nbsp; <span class="c-cyan">&#9679; alterado</span> &nbsp; '
+           f'<span class="c-amber">&#9679; imputado</span></div>')
+
+    positions = list(range(len(out)))
+    if only:
+        positions = [i for i in positions if row_changed[i]]
+    elif order == "Alterados primeiro":
+        positions = [i for i in positions if row_changed[i]] + [i for i in positions if not row_changed[i]]
+    if not positions:
+        st.caption("Nenhuma linha foi alterada.")
+        return
+    if len(positions) > PREVIEW_ROWS:
+        st.caption(f"Primeiras {fmt_int(PREVIEW_ROWS)} de {fmt_int(len(positions))} linhas")
+    positions = positions[:PREVIEW_ROWS]
+    # O índice mostra a linha do arquivo original, para achar o registro de volta
+    labels = pd.Index([int(res["counts"]["origin"][i]) + 1 for i in positions], name="linha")
+    view = out.iloc[positions].set_axis(labels)
+    try:
+        styled = highlight(view, imputed.iloc[positions].set_axis(labels), changed.iloc[positions].set_axis(labels))
+        st.dataframe(styled, width="stretch")
+    except Exception:
+        st.dataframe(view.astype(str), width="stretch")
 
 
 def step_export(res):
@@ -877,21 +931,10 @@ def step_export(res):
     with st.container(key="card_table"):
         t_out, t_raw = st.tabs([f"Dados Tratados ({fmt_int(len(out))})", f"Dados Originais ({fmt_int(len(res['raw']))})"])
         with t_out:
-            n_imp = int(res["imputed"].to_numpy().sum())
-            if n_imp:
-                st.html('<div class="dc-small" style="text-align:right"><span class="c-amber">&#9679; imputado'
-                        "</span></div>")
-            view = out.head(PREVIEW_ROWS)
-            if len(out) > PREVIEW_ROWS:
-                st.caption(f"Primeiras {fmt_int(PREVIEW_ROWS)} de {fmt_int(len(out))} linhas")
-            try:
-                styled = highlight(view, res["imputed"].head(PREVIEW_ROWS)) if n_imp else \
-                    view.style.format(precision=2, na_rep="")
-                st.dataframe(styled, width="stretch")
-            except Exception:
-                st.dataframe(view.astype(str), width="stretch")
+            data_table(res)
         with t_raw:
-            st.dataframe(res["raw"].head(PREVIEW_ROWS).astype(str), width="stretch")
+            raw_view = res["raw"].head(PREVIEW_ROWS).astype(str)
+            st.dataframe(raw_view.set_axis(pd.RangeIndex(1, len(raw_view) + 1, name="linha")), width="stretch")
 
     st.write("")
     back, _, sep, d1, d2, d3 = st.columns([1.4, 1.2, 1, 1.1, 1.1, 1.1], vertical_alignment="bottom")

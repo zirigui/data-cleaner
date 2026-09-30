@@ -654,7 +654,31 @@ def treat(df: pd.DataFrame, cfg: dict, types: dict):
     log += [{"column": None, "text": t} for t in l]
     counts["rows_removed"] += n - len(df)
     imputed = imputed.loc[df.index]
+    counts["origin"] = df.index.tolist()  # linha do arquivo original de cada linha tratada
     return df.reset_index(drop=True), log, imputed.reset_index(drop=True), counts
+
+
+def changed_cells(raw: pd.DataFrame, out: pd.DataFrame, origin: list, rename: dict, types: dict) -> pd.DataFrame:
+    """Células do resultado cujo conteúdo difere do arquivo original.
+    O original passa pela mesma conversão de tipo, então só mudar o formato (ex.: '1.500,00' → 1500) não conta."""
+    inverse = {v: k for k, v in (rename or {}).items()}
+    src = raw.loc[origin].reset_index(drop=True)
+    mask = pd.DataFrame(False, index=out.index, columns=out.columns)
+    for col in out.columns:
+        name = inverse.get(col, col)
+        if name not in src.columns:
+            continue
+        kind = types.get(col, "texto")
+        before = convert(src[name], kind)
+        after = out[col]
+        if kind == "numérico":
+            a, b = pd.to_numeric(before, errors="coerce").astype(float), pd.to_numeric(after, errors="coerce").astype(float)
+            same = (a.isna() & b.isna()) | ((a - b).abs() <= 1e-9 * np.maximum(1, a.abs())).fillna(False)
+        else:
+            a, b = before.astype("string"), after.astype("string")
+            same = (a.isna() & b.isna()) | (a == b).fillna(False)
+        mask[col] = ~same.to_numpy(dtype=bool)
+    return mask
 
 
 def format_value(value) -> str:

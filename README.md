@@ -16,6 +16,7 @@ Aplicativo Streamlit para limpar arquivos CSV, TSV, TXT, Excel, JSON e Parquet e
 | Imputação por coluna | Média, mediana, moda, anterior (forward fill), seguinte (backward fill), interpolação ou preservar. A sugestão inicial usa a assimetria de Pearson |
 | Outliers por IQR | Manter, limitar ao intervalo, tornar nulo ou remover a linha, por coluna |
 | Gráficos | Nulos por coluna, distribuição (histograma + boxplot), valores mais frequentes, correlação e comparações antes/depois |
+| Tabela da exportação | Mostra primeiro as linhas alteradas e depois o restante (ou só as alteradas), com a linha do arquivo original e as células mudadas destacadas: verde-azulado para alterações e amarelo para imputações |
 | Mais opções | Maiúsculas/minúsculas, acentos, caracteres especiais, excluir e renomear colunas, remover linhas com nulos, fator IQR, limite de assimetria e filtros por condição |
 
 **Sugestão de imputação:** calcula a assimetria de Pearson `3·(média − mediana) / desvio padrão`. Se |assimetria| < limite (padrão 0,5), sugere a **média**; caso contrário, a **mediana**. Colunas categóricas e booleanas usam a **moda**, datas repetem o valor anterior e texto livre é preservado.
