@@ -1,15 +1,15 @@
 [theme]
 base = "dark"
-font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
-codeFont = "'JetBrains Mono':https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap"
-baseRadius = "medium"
+font = "'Plus Jakarta Sans':https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap"
+codeFont = "'IBM Plex Mono':https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+baseRadius = "full"
 showWidgetBorder = true
-primaryColor = "#6366f1"
-backgroundColor = "#07090f"
-secondaryBackgroundColor = "#0f131c"
-textColor = "#e5e7eb"
-borderColor = "#1f2533"
-linkColor = "#818cf8"
+primaryColor = "#ff7a59"
+backgroundColor = "#071112"
+secondaryBackgroundColor = "#0c1a1c"
+textColor = "#e6f0ef"
+borderColor = "#1b3236"
+linkColor = "#2dd4bf"
 
 [server]
 maxUploadSize = 200

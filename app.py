@@ -8,7 +8,7 @@ import streamlit as st
 import cleaner as cl
 import charts as ch
 
-st.set_page_config(page_title="DataClean", page_icon=":material/cleaning_services:", layout="wide")
+st.set_page_config(page_title="Limpador de Dados", page_icon=":material/cleaning_services:", layout="wide")
 
 STEPS = ["Carregar", "Tratar", "Exportar"]
 SEPARATORS = {"Automático": None, "Vírgula (,)": ",", "Ponto e vírgula (;)": ";", "Tab": "\t", "Barra vertical (|)": "|"}
@@ -38,13 +38,12 @@ PREVIEW_ROWS = 1000
 st.html(
     """
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
     :root {
-      --bg: #07090f; --surface: #0c1018; --surface-2: #121722; --border: #1c2230; --text: #e5e7eb;
-      --muted: #6b7488; --faint: #3a4254; --accent: #6366f1;
-      --cyan: #22d3ee; --violet: #a78bfa; --green: #10b981; --amber: #f59e0b; --orange: #f97316;
-      --red: #ef4444; --blue: #60a5fa; --pink: #f472b6; --slate: #94a3b8;
-      --mono: 'JetBrains Mono', ui-monospace, monospace;
+      --bg: #071112; --surface: #0c1a1c; --surface-2: #122427; --border: #1b3236; --text: #e6f0ef;
+      --muted: #6f8a8c; --faint: #3b5456; --accent: #ff7a59; --accent-2: #2dd4bf;
+      --cyan: #2dd4bf; --violet: #c4a1ff; --green: #a3e635; --amber: #facc15; --orange: #fb923c; --red: #fb7185; --blue: #7dd3fc; --pink: #f9a8d4; --slate: #9aa7a6;
+      --mono: 'IBM Plex Mono', ui-monospace, monospace; --sans: 'Plus Jakarta Sans', sans-serif;
     }
     [data-testid="stToolbar"], [data-testid="stToolbarActions"], .stAppDeployButton,
     [data-testid="stMainMenu"], #MainMenu, [data-testid="stDecoration"] { display: none !important; }
@@ -53,48 +52,56 @@ st.html(
 
     /* Cards */
     div[class*="st-key-card"] { background: var(--surface); border: 1px solid var(--border) !important;
-                                border-radius: 14px; padding: 1.1rem 1.25rem; }
+                                border-radius: 18px; padding: 1.1rem 1.25rem; }
     div[class*="st-key-colcard"] { background: var(--surface); border: 1px solid var(--border) !important;
-                                   border-radius: 14px; padding: 1rem 1.1rem; }
+                                   border-radius: 18px; padding: 1rem 1.1rem; }
     /* Linhas internas dos cards não quebram no celular */
     div[class*="st-key-colcard"] [data-testid="stHorizontalBlock"],
     .st-key-card_file [data-testid="stHorizontalBlock"] { flex-wrap: nowrap; }
     div[class*="st-key-colcard"] [data-testid="stColumn"],
     .st-key-card_file [data-testid="stColumn"] { min-width: 0 !important; }
-    div[class*="st-key-colcard"]:hover { border-color: #2a3244 !important; }
+    div[class*="st-key-colcard"]:hover { border-color: #2b4a4f !important; transform: translateY(-1px); }
+    div[class*="st-key-colcard"] { transition: border-color .15s, transform .15s; }
     [data-testid="stExpander"] details { background: var(--surface); border: 1px solid var(--border);
                                          border-radius: 14px; }
     [data-testid="stExpander"] summary { padding: .9rem 1.2rem; }
 
     /* Cabeçalho */
-    .dc-brand { display: flex; align-items: center; gap: .65rem; font-weight: 700; font-size: 1.05rem;
-                height: 42px; }
-    .dc-logo { width: 30px; height: 30px; border-radius: 8px; background: #161a2e; border: 1px solid #262c48;
-               display: grid; place-items: center; }
-    .dc-logo i { display: grid; grid-template-columns: 6px 6px; gap: 2px; }
-    .dc-logo b { width: 6px; height: 6px; border-radius: 1.5px; background: #818cf8; }
-    .dc-logo b:nth-child(4) { background: #3b3f73; }
-    .dc-stepper { display: flex; align-items: center; justify-content: center; gap: .6rem; height: 42px; }
-    .dc-step { display: flex; align-items: center; gap: .5rem; font-size: .88rem; color: var(--faint);
-               white-space: nowrap; }
-    .dc-step .n { width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center;
-                  font-size: .72rem; font-weight: 600; background: #141925; color: var(--muted); }
-    .dc-step.current { color: var(--text); font-weight: 600; }
-    .dc-step.current .n { background: var(--accent); color: white; }
-    .dc-step.done { color: var(--green); font-weight: 500; }
-    .dc-step.done .n { background: var(--green); color: #04130d; }
-    .dc-line { width: 48px; height: 1px; background: var(--border); }
-    .dc-rule { border-bottom: 1px solid var(--border); margin: .5rem -1.25rem 1.25rem; }
+    .dc-brand { display: flex; align-items: center; gap: .6rem; height: 42px; font-family: var(--sans); }
+    .dc-brand b { font-weight: 800; font-size: 1.1rem; letter-spacing: -.02em; }
+    .dc-brand small { display: block; font-family: var(--mono); font-size: .62rem; color: var(--muted);
+                      letter-spacing: .04em; margin-top: -2px; }
+    .dc-logo { width: 32px; height: 32px; border-radius: 10px; display: grid; place-items: center;
+               background: linear-gradient(135deg, #ff7a59, #ffb259); color: #2a0f06; font-size: 1rem;
+               box-shadow: 0 4px 18px rgba(255,122,89,.25); }
+    .dc-stepper { display: flex; justify-content: center; }
+    .dc-track { display: inline-flex; align-items: center; gap: .25rem; padding: .3rem; border-radius: 999px;
+                background: var(--surface); border: 1px solid var(--border); }
+    .dc-step { display: flex; align-items: center; gap: .45rem; font-size: .84rem; color: var(--muted);
+               white-space: nowrap; padding: .35rem .85rem .35rem .4rem; border-radius: 999px; }
+    .dc-step .n { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center;
+                  font-family: var(--mono); font-size: .7rem; font-weight: 600; background: transparent;
+                  border: 1px dashed var(--faint); color: var(--muted); }
+    .dc-step.current { background: var(--accent); color: #2a0f06; font-weight: 700; }
+    .dc-step.current .n { background: #2a0f06; border: none; color: var(--accent); }
+    .dc-step.done { color: var(--green); font-weight: 600; }
+    .dc-step.done .n { background: rgba(163,230,53,.12); border: 1px solid var(--green); color: var(--green); }
+    .dc-line { display: none; }
+    @media (max-width: 640px) { .dc-step .t { display: none; } .dc-step.current .t { display: inline; } }
+    .dc-rule { height: 1px; margin: .5rem -1.25rem 1.5rem;
+               background: linear-gradient(90deg, transparent, #ff7a59 20%, #2dd4bf 80%, transparent); opacity: .45; }
+    .dc-strip { height: 3px; border-radius: 3px; margin: -.35rem 0 .9rem; width: 42px; }
+    html, body, .stApp, button, input, textarea { font-family: var(--sans); }
     @media (max-width: 640px) { .dc-line { width: 14px; } .dc-step .t { display: none; }
                                 .dc-step.current .t { display: inline; } }
 
     /* Upload: a área inteira abre o seletor de arquivos */
     section[data-testid="stFileUploaderDropzone"] {
-      position: relative; min-height: 280px; border: 1.5px dashed #232a3a; border-radius: 16px;
+      position: relative; min-height: 280px; border: 1.5px dashed #24403f; border-radius: 22px;
       background: transparent; display: flex; flex-direction: column; justify-content: center;
       align-items: center; padding: 2.5rem 1rem; transition: border-color .15s, background .15s; }
     section[data-testid="stFileUploaderDropzone"]:hover { border-color: var(--accent);
-                                                          background: rgba(99,102,241,.04); }
+                                                          background: rgba(255,122,89,.04); }
     section[data-testid="stFileUploaderDropzone"] > span { position: absolute; inset: 0; z-index: 2; }
     section[data-testid="stFileUploaderDropzone"] > span button { width: 100%; height: 100%; opacity: 0;
                                                                   cursor: pointer; }
@@ -115,7 +122,8 @@ st.html(
     .dc-chips { display: grid; grid-template-columns: repeat(3, minmax(0, 180px)); gap: .5rem;
                 justify-content: center; margin-top: 1.25rem; }
     @media (max-width: 640px) { .dc-chips { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-    .dc-chip { font-family: var(--mono); font-size: .75rem; text-align: center; padding: .7rem .5rem;
+    .dc-chip { font-family: var(--mono); font-size: .74rem; text-align: center; padding: .6rem .8rem;
+               border-radius: 999px !important;
                border-radius: 10px; border: 1px solid; }
 
     /* Tipografia utilitária */
@@ -123,26 +131,26 @@ st.html(
     .dc-label { font-family: var(--mono); font-size: .68rem; letter-spacing: .06em; text-transform: uppercase;
                 color: var(--muted); }
     .dc-title { font-size: .82rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
-                color: #c7cbd6; margin-bottom: .75rem; }
+                color: #b9cfcd; margin-bottom: .75rem; }
     .dc-small { font-family: var(--mono); font-size: .72rem; color: var(--muted); }
     .c-cyan { color: var(--cyan); } .c-violet { color: var(--violet); } .c-green { color: var(--green); }
     .c-amber { color: var(--amber); } .c-orange { color: var(--orange); } .c-red { color: var(--red); }
     .c-blue { color: var(--blue); } .c-pink { color: var(--pink); } .c-slate { color: var(--slate); }
-    .c-muted { color: var(--muted); } .c-accent { color: #818cf8; }
-    .bg-cyan { background: rgba(34,211,238,.06); border-color: rgba(34,211,238,.22) !important; }
-    .bg-violet { background: rgba(167,139,250,.07); border-color: rgba(167,139,250,.25) !important; }
-    .bg-green { background: rgba(16,185,129,.06); border-color: rgba(16,185,129,.22) !important; }
-    .bg-amber { background: rgba(245,158,11,.06); border-color: rgba(245,158,11,.22) !important; }
-    .bg-orange { background: rgba(249,115,22,.06); border-color: rgba(249,115,22,.22) !important; }
-    .bg-blue { background: rgba(96,165,250,.07); border-color: rgba(96,165,250,.25) !important; }
-    .bg-pink { background: rgba(244,114,182,.07); border-color: rgba(244,114,182,.25) !important; }
-    .bg-slate { background: rgba(148,163,184,.07); border-color: rgba(148,163,184,.25) !important; }
-    .bg-red { background: rgba(239,68,68,.06); border-color: rgba(239,68,68,.22) !important; }
+    .c-muted { color: var(--muted); } .c-accent { color: var(--accent); }
+    .bg-cyan { background: rgba(45,212,191,.07); border-color: rgba(45,212,191,.28) !important; }
+    .bg-violet { background: rgba(196,161,255,.07); border-color: rgba(196,161,255,.28) !important; }
+    .bg-green { background: rgba(163,230,53,.07); border-color: rgba(163,230,53,.28) !important; }
+    .bg-amber { background: rgba(250,204,21,.07); border-color: rgba(250,204,21,.28) !important; }
+    .bg-orange { background: rgba(251,146,60,.07); border-color: rgba(251,146,60,.28) !important; }
+    .bg-red { background: rgba(251,113,133,.07); border-color: rgba(251,113,133,.28) !important; }
+    .bg-blue { background: rgba(125,211,252,.07); border-color: rgba(125,211,252,.28) !important; }
+    .bg-pink { background: rgba(249,168,212,.07); border-color: rgba(249,168,212,.28) !important; }
+    .bg-slate { background: rgba(154,167,166,.07); border-color: rgba(154,167,166,.28) !important; }
 
     /* Arquivo */
     .dc-file { display: flex; align-items: center; gap: .9rem; }
     .dc-file .name { font-weight: 600; font-size: .92rem; }
-    .dc-file .ico { color: #818cf8; }
+    .dc-file .ico { color: var(--accent); }
     .dc-dims { display: flex; gap: 1.5rem; justify-content: flex-end; text-align: center; }
     .dc-dims b { display: block; font-size: 1.05rem; font-weight: 600; }
 
@@ -167,7 +175,7 @@ st.html(
     .dc-comp-row { display: grid; grid-template-columns: 44px minmax(60px, 140px) 1fr 44px; align-items: center;
                    gap: .75rem; font-size: .85rem; }
     .dc-comp-row .pct { font-family: var(--mono); font-size: .72rem; text-align: right; }
-    .dc-bar { height: 7px; border-radius: 99px; background: #1a2030; overflow: hidden; }
+    .dc-bar { height: 7px; border-radius: 99px; background: #15292c; overflow: hidden; }
     .dc-bar > i { display: block; height: 100%; border-radius: 99px; }
     .dc-badge { font-family: var(--mono); font-size: .62rem; font-weight: 600; padding: .15rem .4rem;
                 border-radius: 5px; border: 1px solid; text-align: center; letter-spacing: .04em;
@@ -182,7 +190,7 @@ st.html(
     .dc-row .v { font-family: var(--mono); font-size: .75rem; }
     .dc-note { font-family: var(--mono); font-size: .68rem; color: var(--muted); margin: .4rem 0 .9rem; }
     .dc-hist { display: flex; align-items: flex-end; gap: 2px; height: 46px; margin: .35rem 0 .6rem; }
-    .dc-hist i { flex: 1; background: #1a9bb3; border-radius: 1px 1px 0 0; min-height: 0; }
+    .dc-hist i { flex: 1; background: linear-gradient(180deg, #2dd4bf, #14867a); border-radius: 1px 1px 0 0; min-height: 0; }
     .dc-hist i.out { background: var(--orange); }
     .dc-range { display: flex; justify-content: space-between; font-family: var(--mono); font-size: .66rem;
                 color: var(--muted); }
@@ -219,8 +227,12 @@ st.html(
                                 .dc-log .val { grid-column: 2; text-align: left; } }
 
     /* Widgets */
-    .stButton button, .stDownloadButton button { border-radius: 9px; font-weight: 600; }
+    .stButton button, .stDownloadButton button { border-radius: 999px; font-weight: 700; }
     [data-testid="stBaseButton-secondary"] { background: transparent; }
+    [data-testid="stBaseButton-primary"], [data-testid="stBaseButton-primary"] p,
+    [data-testid="stPopoverButton"][kind="primary"], [data-testid="stPopoverButton"][kind="primary"] p {
+      color: #2a0f06 !important; }
+    [data-testid="stBaseButton-primary"] { box-shadow: 0 6px 22px rgba(255,122,89,.22); }
     [data-testid="stButtonGroup"] button { font-family: var(--mono); font-size: .72rem; }
     </style>
     """
@@ -386,13 +398,13 @@ def stepper_html(current: int) -> str:
         cls = "current" if i == current else "done" if i < current else ""
         n = "✓" if i < current else str(i)
         parts.append(f'<div class="dc-step {cls}"><span class="n">{n}</span><span class="t">{name}</span></div>')
-    return '<div class="dc-stepper">' + '<span class="dc-line"></span>'.join(parts) + "</div>"
+    return '<div class="dc-stepper"><div class="dc-track">' + "".join(parts) + "</div></div>"
 
 
 def header(result=None):
     brand, steps, actions = st.columns([1.2, 3, 1.4], vertical_alignment="center")
-    brand.html('<div class="dc-brand"><span class="dc-logo"><i><b></b><b></b><b></b><b></b></i></span>'
-               "DataClean</div>")
+    brand.html('<div class="dc-brand"><span class="dc-logo">&#10022;</span><div><b>Limpador</b>'
+               "<small>dados prontos para análise</small></div></div>")
     steps.html(stepper_html(state.step))
     if state.step > 1:
         a1, a2 = actions.columns(2)
@@ -446,7 +458,7 @@ def step_upload():
 # --------------------------------------------------------------------------- #
 def ring(pct: float, color: str, caption: str) -> str:
     return (f'<div class="dc-ring"><div class="dial" style="background:conic-gradient(var(--{color}) '
-            f'{pct:.1f}%, #1a2030 0)"><span class="c-{color}">{pct:.0f}%</span></div>'
+            f'{pct:.1f}%, #15292c 0)"><span class="c-{color}">{pct:.0f}%</span></div>'
             f'<div class="cap">{caption}</div></div>')
 
 
@@ -632,7 +644,7 @@ def column_card(col, prof: dict, series: pd.Series, res, idx: int):
 
     with st.container(key=f"colcard_{k}"):
         head, menu = st.columns([6, 1], vertical_alignment="center")
-        head.html(f'<div class="dc-colhead"><span class="name dc-trunc">{display}</span>'
+        head.html(f'<div class="dc-strip" style="background:var(--{color})"></div><div class="dc-colhead"><span class="name dc-trunc">{display}</span>'
                   f'<span class="dc-badge c-{color} bg-{color}">{prof["kind"].upper()}</span></div>')
         with menu.popover("", icon=":material/more_vert:", help="Tipo e exclusão"):
             current = res["types"][col]
@@ -821,7 +833,7 @@ def stat_card(key, dot, title, value, color, sub, extra=""):
 
 
 def highlight(df: pd.DataFrame, mask: pd.DataFrame):
-    style = "background-color: rgba(245,158,11,.12); color: #f59e0b"
+    style = "background-color: rgba(250,204,21,.12); color: #facc15"
     styles = pd.DataFrame("", index=df.index, columns=df.columns)
     styles[mask.reindex(index=df.index, columns=df.columns, fill_value=False).astype(bool)] = style
     return df.style.apply(lambda _: styles, axis=None).format(precision=2, na_rep="")
