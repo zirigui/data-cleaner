@@ -10,7 +10,7 @@ import cleaner as cl
 # Tons validados por contraste (marca ≥ 3:1 contra o fundo) em cada modo
 PALETTES = {
     "light": {"ink": "#1a1a1a", "muted": "#949494", "text": "#525252", "surface": "#ffffff", "wash": "#f0f0f0"},
-    "dark": {"ink": "#ececec", "muted": "#6b6b6b", "text": "#a3a3a3", "surface": "#0e1117", "wash": "#24262c"},
+    "dark": {"ink": "#818cf8", "muted": "#4b5368", "text": "#8b93a7", "surface": "#07090f", "wash": "#1a2030"},
 }
 BAR = 18  # espessura das barras (≤ 24px)
 # Números no padrão brasileiro nos eixos e tooltips
@@ -35,7 +35,12 @@ def _legend():
 
 
 def _finish(chart):
-    return chart.configure(locale=LOCALE)
+    p = palette()
+    return (chart.configure(locale=LOCALE, background="transparent")
+            .configure_view(stroke=None)
+            .configure_axis(labelColor=p["text"], titleColor=p["text"], gridColor=p["wash"], domainColor=p["wash"],
+                            tickColor=p["wash"])
+            .configure_legend(labelColor=p["text"], titleColor=p["text"]))
 
 
 def _fmt(value: float) -> str:
