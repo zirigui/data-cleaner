@@ -47,7 +47,10 @@ st.html(
     }
     [data-testid="stToolbar"], [data-testid="stToolbarActions"], .stAppDeployButton,
     [data-testid="stMainMenu"], #MainMenu, [data-testid="stDecoration"] { display: none !important; }
-    header[data-testid="stHeader"] { height: 0; background: transparent; }
+    /* O cabeçalho nativo do Streamlit fica fixo no topo e, mesmo transparente, cobria os botões
+       "Trocar arquivo" e "Exportar". Como o app não usa barra lateral, ele é removido. */
+    header[data-testid="stHeader"] { display: none !important; }
+    .stMainBlockContainer [data-testid="stHorizontalBlock"]:first-child { position: relative; z-index: 5; }
     .block-container { max-width: 1280px; padding: 1rem 1.25rem 3rem; }
 
     /* Cards */
